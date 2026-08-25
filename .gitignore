@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Environment / secrets
+.env
+*.key
+*.pem
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Generated data
+data/raw/
+data/processed/
+data/vectorstore/
+data/evaluation/
