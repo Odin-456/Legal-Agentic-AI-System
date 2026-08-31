@@ -37,6 +37,10 @@ llm = ChatOpenAI(
 
 def answer_question(query):
 
+    # --------------------------------------------------------
+    # Retrieve relevant legal passages
+    # --------------------------------------------------------
+
     results = retriever.retrieve(
         query,
         top_k=TOP_K,
@@ -49,9 +53,13 @@ def answer_question(query):
             []
         )
 
+    # --------------------------------------------------------
+    # Build structured context
+    # --------------------------------------------------------
+
     context_parts = []
 
-    for result in results:
+    for i, result in enumerate(results, start=1):
 
         metadata = result["metadata"]
 
@@ -68,8 +76,17 @@ def answer_question(query):
             "subparagraph"
         )
 
+        clause = metadata.get(
+            "clause"
+        )
+
+        subclause = metadata.get(
+            "subclause"
+        )
+
         text = result["text"]
 
+        # Build the most specific legal location
         location = citation
 
         if paragraph:
@@ -78,39 +95,103 @@ def answer_question(query):
         if subparagraph:
             location += subparagraph
 
-        context_parts.append(
-            f"[{location}]\n{text}"
+        if clause:
+            location += clause
+
+        if subclause:
+            location += subclause
+
+        retrieval_type = result.get(
+            "retrieval_type",
+            "unknown"
         )
 
-    context = "\n\n".join(
-        context_parts
-    )
+        context_parts.append(
+            f"SOURCE {i}\n"
+            f"CITATION: {location}\n"
+            f"RETRIEVAL TYPE: {retrieval_type}\n"
+            f"TEXT: {text}"
+        )
+
+    context = "\n\n".join(context_parts)
+
+    # --------------------------------------------------------
+    # Grounded legal-answer prompt
+    # --------------------------------------------------------
 
     prompt = f"""
-You are a legal research assistant.
+You are a legal research assistant specialising
+in the United States Code of Federal Regulations
+(eCFR).
 
-Answer the user's question using ONLY the
-provided eCFR context.
+Your task is to answer the user's question using
+ONLY the eCFR sources provided below.
 
-Rules:
+STRICT GROUNDING RULES:
 
-1. Do not invent legal rules.
-2. If the context does not contain enough
-   information, say so clearly.
-3. Use the most directly relevant regulation.
-4. Cite the relevant CFR provision(s).
-5. Do not treat unrelated USDA programs as
-   answers to the question.
-6. If multiple regulations are relevant,
-   clearly distinguish them.
-7. Give a concise, direct answer.
+1. Use ONLY information explicitly contained in
+   the provided eCFR context.
+
+2. Do NOT use information from your general
+   knowledge.
+
+3. Do NOT use information from websites, regulations,
+   programs, or documents that are not included in
+   the provided context.
+
+4. Every CFR citation in your answer MUST appear
+   in the provided context.
+
+5. If the question refers to a specific CFR section
+   or paragraph, prioritize the source containing
+   that exact section or paragraph.
+
+6. Prefer the most directly relevant source over
+   a related but less relevant source.
+
+7. Do NOT introduce another CFR section merely
+   because it may be related to the topic.
+
+8. Do NOT substitute a different regulation for
+   the regulation contained in the retrieved context.
+
+9. If multiple sources are relevant, combine them
+   only when they directly help answer the question.
+
+10. If the provided context does not contain enough
+    information to answer the question, say:
+
+    "The provided eCFR context does not contain
+    enough information to answer this question."
+
+11. Do not guess or fill in missing information.
+
+12. Keep the answer concise and directly answer
+    the user's question.
+
+13. After explaining the answer, provide the relevant
+    CFR citation.
+
+IMPORTANT:
+
+The retrieved sources are the complete available
+eCFR evidence for this question.
+
+You must not rely on outside knowledge even if you
+know a potentially relevant regulation.
 
 USER QUESTION:
 {query}
 
-eCFR CONTEXT:
+PROVIDED eCFR CONTEXT:
 {context}
+
+ANSWER:
 """
+
+    # --------------------------------------------------------
+    # Generate answer
+    # --------------------------------------------------------
 
     response = llm.invoke(prompt)
 
@@ -140,7 +221,7 @@ if __name__ == "__main__":
 
     print("\nRETRIEVED SOURCES:")
 
-    for result in results:
+    for i, result in enumerate(results, start=1):
 
         metadata = result["metadata"]
 
@@ -157,6 +238,14 @@ if __name__ == "__main__":
             "subparagraph"
         )
 
+        clause = metadata.get(
+            "clause"
+        )
+
+        subclause = metadata.get(
+            "subclause"
+        )
+
         retrieval_type = result.get(
             "retrieval_type",
             "unknown"
@@ -170,7 +259,13 @@ if __name__ == "__main__":
         if subparagraph:
             location += subparagraph
 
+        if clause:
+            location += clause
+
+        if subclause:
+            location += subclause
+
         print(
-            f"- {location} "
+            f"{i}. {location} "
             f"[{retrieval_type}]"
         )
