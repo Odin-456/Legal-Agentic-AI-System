@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>NSW Property-Law AI Assistant</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #f4f6f8;
+            color: #222;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            line-height: 1.5;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+            resize: vertical;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #555;
+        }
+
+        button {
+            margin-top: 15px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            background: #222;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #444;
+        }
+
+        .answer {
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .error {
+            background: #ffe6e6;
+            border: 1px solid #ffb3b3;
+            padding: 15px;
+            border-radius: 8px;
+            color: #a00000;
+        }
+
+        .disclaimer {
+            font-size: 13px;
+            color: #777;
+            line-height: 1.5;
+            margin-top: 20px;
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+<div class="container">
+
+    <div class="header">
+
+        <h1>NSW Property-Law AI Assistant</h1>
+
+        <div class="subtitle">
+            Ask questions about the NSW property-law legislation
+            contained in the system's legal corpus.
+        </div>
+
+    </div>
+
+
+    <div class="card">
+
+        <form method="POST">
+
+            <label for="question">
+                Legal question
+            </label>
+
+            <textarea
+                id="question"
+                name="question"
+                placeholder="Example: What happens if a landlord does not carry out required repairs?"
+                required
+            >{{ question }}</textarea>
+
+            <button type="submit">
+                Ask Question
+            </button>
+
+        </form>
+
+    </div>
+
+
+    {% if error %}
+
+    <div class="card">
+
+        <div class="error">
+            {{ error }}
+        </div>
+
+    </div>
+
+    {% endif %}
+
+
+    {% if answer %}
+
+    <div class="card">
+
+        <h2>Answer</h2>
+
+        <div class="answer">{{ answer }}</div>
+
+    </div>
+
+    {% endif %}
+
+
+    <div class="card">
+
+        <div class="disclaimer">
+
+            <strong>Important:</strong>
+            This system provides general information based on
+            retrieved NSW property-law legislation. It is not
+            personalised legal advice.
+
+        </div>
+
+    </div>
+
+</div>
+
+</body>
+
+</html>
+

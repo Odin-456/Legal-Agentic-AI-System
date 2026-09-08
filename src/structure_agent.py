@@ -2,6 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from structure_retrieval import StructureAwareRetriever
+from query_expansion import expand_query
 from langchain_openai import ChatOpenAI
 
 
@@ -12,6 +13,7 @@ from langchain_openai import ChatOpenAI
 load_dotenv()
 
 MODEL_NAME = "gpt-5-mini"
+
 TOP_K = 5
 MAX_RELATED = 10
 
@@ -20,7 +22,9 @@ MAX_RELATED = 10
 # INITIALISE
 # ============================================================
 
-print("Initialising Structure-Aware Legal Agent...")
+print(
+    "Initialising Structure-Aware NSW Property-Law Agent..."
+)
 
 retriever = StructureAwareRetriever()
 
@@ -37,235 +41,178 @@ llm = ChatOpenAI(
 
 def answer_question(query):
 
-    # --------------------------------------------------------
-    # Retrieve relevant legal passages
-    # --------------------------------------------------------
+    expanded_query = (
+        expand_query(query)
+    )
 
     results = retriever.retrieve(
         query,
+        expanded_query=expanded_query,
         top_k=TOP_K,
         max_related=MAX_RELATED,
     )
 
     if not results:
-        return (
-            "No relevant legal documents were found.",
-            []
-        )
 
-    # --------------------------------------------------------
-    # Build structured context
-    # --------------------------------------------------------
+        return (
+            "No relevant NSW property-law documents "
+            "were found.",
+            [],
+        )
 
     context_parts = []
 
-    for i, result in enumerate(results, start=1):
+    for i, result in enumerate(
+        results,
+        start=1,
+    ):
 
-        metadata = result["metadata"]
-
-        citation = metadata.get(
-            "citation",
-            "Unknown citation"
+        metadata = result.get(
+            "metadata",
+            {},
         )
 
-        paragraph = metadata.get(
-            "paragraph"
+        act = metadata.get(
+            "act",
+            "Unknown Act",
         )
 
-        subparagraph = metadata.get(
-            "subparagraph"
+        section = metadata.get(
+            "section",
+            "Unknown section",
         )
 
-        clause = metadata.get(
-            "clause"
+        heading = metadata.get(
+            "heading",
+            "",
         )
-
-        subclause = metadata.get(
-            "subclause"
-        )
-
-        text = result["text"]
-
-        # Build the most specific legal location
-        location = citation
-
-        if paragraph:
-            location += paragraph
-
-        if subparagraph:
-            location += subparagraph
-
-        if clause:
-            location += clause
-
-        if subclause:
-            location += subclause
 
         retrieval_type = result.get(
             "retrieval_type",
-            "unknown"
+            "unknown",
         )
 
         context_parts.append(
-            f"SOURCE {i}\n"
-            f"CITATION: {location}\n"
-            f"RETRIEVAL TYPE: {retrieval_type}\n"
-            f"TEXT: {text}"
+            f"""
+SOURCE {i}
+
+ACT:
+{act}
+
+SECTION:
+{section}
+
+HEADING:
+{heading}
+
+RETRIEVAL TYPE:
+{retrieval_type}
+
+LEGAL TEXT:
+{result.get("text", "")}
+"""
         )
 
-    context = "\n\n".join(context_parts)
-
-    # --------------------------------------------------------
-    # Grounded legal-answer prompt
-    # --------------------------------------------------------
+    context = "\n\n".join(
+        context_parts
+    )
 
     prompt = f"""
-You are a legal research assistant specialising
-in the United States Code of Federal Regulations
-(eCFR).
+You are an Australian property-law question-answering
+assistant.
 
-Your task is to answer the user's question using
-ONLY the eCFR sources provided below.
+You answer questions using ONLY the NSW property-law
+legislation provided in the retrieved context.
 
-STRICT GROUNDING RULES:
+RULES:
 
-1. Use ONLY information explicitly contained in
-   the provided eCFR context.
+1. Do not use information outside the retrieved context.
 
-2. Do NOT use information from your general
-   knowledge.
+2. Do not invent legal rules.
 
-3. Do NOT use information from websites, regulations,
-   programs, or documents that are not included in
-   the provided context.
+3. Do not invent sections or Act names.
 
-4. Every CFR citation in your answer MUST appear
-   in the provided context.
+4. Answer the customer's question directly.
 
-5. If the question refers to a specific CFR section
-   or paragraph, prioritize the source containing
-   that exact section or paragraph.
+5. Explain the answer in clear ordinary language.
 
-6. Prefer the most directly relevant source over
-   a related but less relevant source.
+6. Preserve the meaning of the legislation.
 
-7. Do NOT introduce another CFR section merely
-   because it may be related to the topic.
+7. If the retrieved documents do not contain enough
+   information, say so instead of guessing.
 
-8. Do NOT substitute a different regulation for
-   the regulation contained in the retrieved context.
+8. Always identify the relevant Act and section when
+   supported by the retrieved documents.
 
-9. If multiple sources are relevant, combine them
-   only when they directly help answer the question.
+9. Do not provide personalised legal advice.
 
-10. If the provided context does not contain enough
-    information to answer the question, say:
+10. Make clear that the response is general information
+    based on the retrieved NSW legislation.
 
-    "The provided eCFR context does not contain
-    enough information to answer this question."
+CUSTOMER QUESTION:
 
-11. Do not guess or fill in missing information.
-
-12. Keep the answer concise and directly answer
-    the user's question.
-
-13. After explaining the answer, provide the relevant
-    CFR citation.
-
-IMPORTANT:
-
-The retrieved sources are the complete available
-eCFR evidence for this question.
-
-You must not rely on outside knowledge even if you
-know a potentially relevant regulation.
-
-USER QUESTION:
 {query}
 
-PROVIDED eCFR CONTEXT:
+RETRIEVED NSW PROPERTY-LAW DOCUMENTS:
+
 {context}
 
 ANSWER:
 """
 
-    # --------------------------------------------------------
-    # Generate answer
-    # --------------------------------------------------------
+    response = llm.invoke(
+        prompt
+    )
 
-    response = llm.invoke(prompt)
-
-    return response.content, results
+    return (
+        response.content,
+        results,
+    )
 
 
 # ============================================================
-# TEST
+# MAIN
 # ============================================================
 
 if __name__ == "__main__":
 
     query = (
-        "What happens when land becomes "
-        "agricultural land after being acquired?"
+        "What happens if a landlord fails to carry out "
+        "required repairs?"
     )
 
-    print("\nQUERY:")
-    print(query)
-
-    answer, results = answer_question(
-        query
+    answer, results = (
+        answer_question(
+            query
+        )
     )
 
-    print("\nSTRUCTURE-AWARE AGENT ANSWER:")
+    print()
+    print("=" * 80)
+    print("ANSWER")
+    print("=" * 80)
+
     print(answer)
 
-    print("\nRETRIEVED SOURCES:")
+    print()
+    print("=" * 80)
+    print("SOURCES")
+    print("=" * 80)
 
-    for i, result in enumerate(results, start=1):
+    for index, result in enumerate(
+        results,
+        start=1,
+    ):
 
-        metadata = result["metadata"]
-
-        citation = metadata.get(
-            "citation",
-            "Unknown"
+        metadata = result.get(
+            "metadata",
+            {},
         )
-
-        paragraph = metadata.get(
-            "paragraph"
-        )
-
-        subparagraph = metadata.get(
-            "subparagraph"
-        )
-
-        clause = metadata.get(
-            "clause"
-        )
-
-        subclause = metadata.get(
-            "subclause"
-        )
-
-        retrieval_type = result.get(
-            "retrieval_type",
-            "unknown"
-        )
-
-        location = citation
-
-        if paragraph:
-            location += paragraph
-
-        if subparagraph:
-            location += subparagraph
-
-        if clause:
-            location += clause
-
-        if subclause:
-            location += subclause
 
         print(
-            f"{i}. {location} "
-            f"[{retrieval_type}]"
+            f"{index}. "
+            f"{metadata.get('act', 'Unknown')} "
+            f"§ {metadata.get('section', 'Unknown')} "
+            f"- "
+            f"{metadata.get('heading', '')}"
         )

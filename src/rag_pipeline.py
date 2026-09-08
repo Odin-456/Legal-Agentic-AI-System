@@ -5,54 +5,135 @@ from structure_retrieval import StructureAwareRetriever
 class RAGPipeline:
 
     def __init__(self):
-        self.retriever = StructureAwareRetriever()
 
-    def retrieve(self, question, top_k=5):
+        self.retriever = (
+            StructureAwareRetriever()
+        )
 
-        # 1. Expand the user's question
-        expanded_query = expand_query(question)
+    def retrieve(
+        self,
+        question,
+        top_k=5,
+        max_related=10,
+    ):
+        """
+        Expand the question and retrieve relevant
+        NSW property-law sections.
+        """
 
-        # 2. Retrieve relevant legal documents
-        results = self.retriever.retrieve(
-            question,
-            expanded_query=expanded_query,
-            top_k=top_k,
-            max_related=10
+        expanded_query = (
+            expand_query(question)
+        )
+
+        results = (
+            self.retriever.retrieve(
+                question,
+                expanded_query=expanded_query,
+                top_k=top_k,
+                max_related=max_related,
+            )
         )
 
         return results
 
+
+# ============================================================
+# TEST
+# ============================================================
 
 if __name__ == "__main__":
 
     pipeline = RAGPipeline()
 
     question = (
-        "What must a foreign person do when land "
-        "subsequently becomes agricultural land?"
+        "What happens if a landlord fails to carry out "
+        "required repairs?"
     )
 
-    results = pipeline.retrieve(question)
+    results = pipeline.retrieve(
+        question
+    )
 
     print("=" * 80)
-    print("RAG PIPELINE")
+    print("NSW PROPERTY LAW RAG PIPELINE")
     print("=" * 80)
 
-    for i, result in enumerate(results, start=1):
+    print()
+    print(f"Question: {question}")
 
-        metadata = result.get("metadata", {})
+    for i, result in enumerate(
+        results,
+        start=1,
+    ):
+
+        metadata = result.get(
+            "metadata",
+            {},
+        )
 
         print()
+        print("-" * 80)
         print(f"Result {i}")
+        print("-" * 80)
+
         print(
-            f"Citation: "
-            f"{metadata.get('citation', 'Unknown')}"
+            f"Act: "
+            f"{metadata.get('act', 'Unknown')}"
         )
 
         print(
-            f"Paragraph: "
-            f"{metadata.get('paragraph', '')}"
+            f"Section: "
+            f"{metadata.get('section', 'Unknown')}"
         )
+
+        print(
+            f"Heading: "
+            f"{metadata.get('heading', 'Unknown')}"
+        )
+
+        subsection = metadata.get(
+            "subsection",
+            "",
+        )
+
+        if subsection:
+            print(
+                f"Subsection: "
+                f"{subsection}"
+            )
+
+        paragraph = metadata.get(
+            "paragraph",
+            "",
+        )
+
+        if paragraph:
+            print(
+                f"Paragraph: "
+                f"{paragraph}"
+            )
+
+        nested_paragraph = metadata.get(
+            "nested_paragraph",
+            "",
+        )
+
+        if nested_paragraph:
+            print(
+                f"Nested paragraph: "
+                f"{nested_paragraph}"
+            )
+
+        hierarchy = metadata.get(
+            "hierarchy",
+            "",
+        )
+
+        if hierarchy:
+            print(
+                f"Hierarchy: "
+                f"{hierarchy}"
+            )
 
         print(
             f"Score: "
@@ -64,7 +145,12 @@ if __name__ == "__main__":
             f"{result.get('retrieval_type', 'Unknown')}"
         )
 
+        print()
+        print("Text:")
+
         print(
-            f"Text: "
-            f"{result.get('text', '')[:500]}"
+            result.get(
+                "text",
+                "",
+            )[:1000]
         )

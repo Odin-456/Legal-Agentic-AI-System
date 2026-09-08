@@ -1,1038 +1,947 @@
-import json
-import re
 from pathlib import Path
+import shutil
+import re
 
-import faiss
-import numpy as np
-from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+from langchain_chroma import Chroma
+from langchain_openai import OpenAIEmbeddings
 
-from query_expansion import expand_query
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-INDEX_PATH = Path(
-    "data/vectorstore/title-7/legal_documents.faiss"
+from property_law_parser import parse_property_law_corpus
+from property_law_chunker import create_chunks
+from structure_aware_chunker import (
+    parse_structure_corpus,
+    remove_duplicates,
 )
 
-METADATA_PATH = Path(
-    "data/vectorstore/title-7/metadata.json"
+
+# ============================================================
+# ENVIRONMENT
+# ============================================================
+
+load_dotenv()
+
+
+# ============================================================
+# PATHS
+# ============================================================
+
+BASELINE_VECTORSTORE = Path(
+    "data/vectorstore/property_law_baseline"
 )
 
-MODEL_NAME = "BAAI/bge-base-en-v1.5"
+STRUCTURE_VECTORSTORE = Path(
+    "data/vectorstore/property_law_structure"
+)
 
-SEMANTIC_TOP_K = 30
-MAX_SECTIONS = 10
+BASELINE_COLLECTION = "property_law_baseline"
+STRUCTURE_COLLECTION = "property_law_structure"
 
 
 # ============================================================
-# LEGAL TERM EXTRACTION
+# EMBEDDING MODEL
 # ============================================================
 
-STOPWORDS = {
+EMBEDDING_MODEL = "text-embedding-3-small"
+
+
+# ============================================================
+# TEST QUERY
+# ============================================================
+
+TEST_QUERY = (
+    "What exceptions apply to the title of a registered proprietor?"
+)
+
+
+# ============================================================
+# STOP WORDS
+# ============================================================
+
+STOP_WORDS = {
+    "what",
+    "which",
+    "who",
+    "where",
+    "when",
+    "why",
+    "how",
+    "does",
+    "do",
+    "is",
+    "are",
     "the",
     "a",
     "an",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "being",
-    "when",
-    "what",
-    "what's",
-    "does",
-    "do",
-    "did",
-    "must",
-    "should",
-    "can",
-    "may",
-    "will",
-    "would",
-    "could",
-    "how",
-    "why",
-    "where",
-    "which",
-    "who",
-    "after",
-    "before",
-    "during",
+    "of",
+    "to",
+    "in",
+    "on",
     "for",
     "from",
-    "to",
-    "of",
-    "on",
-    "in",
     "and",
     "or",
     "with",
-    "by",
-    "as",
-    "when",
-    "land",
+    "under",
+    "apply",
+    "applies",
 }
 
 
-def tokenize(text):
-    """
-    Convert text into simple lowercase tokens.
-    """
+# ============================================================
+# CREATE EMBEDDINGS
+# ============================================================
 
-    return re.findall(
-        r"[a-z0-9]+(?:-[a-z0-9]+)*",
-        text.lower()
+def create_embeddings():
+
+    print("\nCreating embedding model...")
+
+    embeddings = OpenAIEmbeddings(
+        model=EMBEDDING_MODEL
+    )
+
+    print(
+        f"Embedding model: {EMBEDDING_MODEL}"
+    )
+
+    return embeddings
+
+
+# ============================================================
+# LOAD BASELINE DOCUMENTS
+# ============================================================
+
+def load_baseline_documents():
+
+    print("\n" + "=" * 80)
+    print("BUILDING BASELINE DOCUMENTS")
+    print("=" * 80)
+
+    sections = parse_property_law_corpus()
+
+    print(
+        f"\nSections parsed: {len(sections)}"
+    )
+
+    documents = create_chunks(
+        sections
+    )
+
+    print(
+        f"Baseline retrieval documents: "
+        f"{len(documents)}"
+    )
+
+    return documents
+
+
+# ============================================================
+# LOAD STRUCTURE-AWARE DOCUMENTS
+# ============================================================
+
+def load_structure_documents():
+
+    print("\n" + "=" * 80)
+    print("BUILDING STRUCTURE-AWARE DOCUMENTS")
+    print("=" * 80)
+
+    documents = parse_structure_corpus()
+
+    print(
+        f"\nStructure chunks created: "
+        f"{len(documents)}"
+    )
+
+    documents = remove_duplicates(
+        documents
+    )
+
+    print(
+        f"Unique structure chunks: "
+        f"{len(documents)}"
+    )
+
+    return documents
+
+
+# ============================================================
+# RESET VECTORSTORE
+# ============================================================
+
+def reset_vectorstore(path):
+
+    if path.exists():
+
+        print(
+            "\nRemoving existing vectorstore:"
+        )
+
+        print(f"  {path}")
+
+        shutil.rmtree(path)
+
+        print("  Removed.")
+
+
+# ============================================================
+# BUILD VECTORSTORE
+# ============================================================
+
+def build_vectorstore(
+    documents,
+    persist_directory,
+    collection_name,
+    embeddings,
+):
+
+    print("\n" + "-" * 80)
+
+    print(
+        f"Creating vectorstore: "
+        f"{collection_name}"
+    )
+
+    print("-" * 80)
+
+    print(
+        f"Documents to embed: "
+        f"{len(documents)}"
+    )
+
+    vectorstore = Chroma.from_documents(
+        documents=documents,
+        embedding=embeddings,
+        collection_name=collection_name,
+        persist_directory=str(
+            persist_directory
+        ),
+    )
+
+    print(
+        "Vectorstore created successfully."
+    )
+
+    return vectorstore
+
+
+# ============================================================
+# TOKENISE QUERY
+# ============================================================
+
+def get_query_terms(query):
+
+    words = re.findall(
+        r"[A-Za-z0-9]+",
+        query.lower(),
+    )
+
+    terms = []
+
+    for word in words:
+
+        if (
+            len(word) > 2
+            and word not in STOP_WORDS
+        ):
+            terms.append(word)
+
+    return set(terms)
+
+
+# ============================================================
+# TEXT MATCH SCORE
+# ============================================================
+
+def text_match_score(
+    query_terms,
+    text,
+):
+
+    if not text:
+        return 0.0
+
+    text_words = set(
+        re.findall(
+            r"[A-Za-z0-9]+",
+            text.lower(),
+        )
+    )
+
+    if not query_terms:
+        return 0.0
+
+    matched = (
+        query_terms
+        & text_words
+    )
+
+    return (
+        len(matched)
+        / len(query_terms)
     )
 
 
-def important_terms(text):
-    """
-    Extract useful legal/search terms.
-    """
+# ============================================================
+# STRUCTURAL RERANK SCORE
+# ============================================================
 
-    tokens = tokenize(text)
+def calculate_structure_score(
+    query,
+    document,
+):
 
-    return {
-        token
-        for token in tokens
-        if token not in STOPWORDS
-        and len(token) > 2
-    }
+    query_terms = get_query_terms(
+        query
+    )
+
+    metadata = document.metadata
+
+    heading = metadata.get(
+        "heading",
+        "",
+    )
+
+    subsection = metadata.get(
+        "subsection",
+        "",
+    )
+
+    paragraph = metadata.get(
+        "paragraph",
+        "",
+    )
+
+    nested_paragraph = metadata.get(
+        "nested_paragraph",
+        "",
+    )
+
+    page_content = (
+        document.page_content
+    )
+
+    heading_score = text_match_score(
+        query_terms,
+        heading,
+    )
+
+    subsection_score = text_match_score(
+        query_terms,
+        subsection,
+    )
+
+    paragraph_score = text_match_score(
+        query_terms,
+        paragraph,
+    )
+
+    nested_score = text_match_score(
+        query_terms,
+        nested_paragraph,
+    )
+
+    text_score = text_match_score(
+        query_terms,
+        page_content,
+    )
+
+    hierarchy = metadata.get(
+        "hierarchy",
+        "",
+    )
+
+    hierarchy_parts = [
+        part.strip()
+        for part in hierarchy.split(">")
+        if part.strip()
+    ]
+
+    hierarchy_depth = len(
+        hierarchy_parts
+    )
+
+    if hierarchy_depth >= 4:
+        hierarchy_score = 1.0
+
+    elif hierarchy_depth == 3:
+        hierarchy_score = 0.75
+
+    elif hierarchy_depth == 2:
+        hierarchy_score = 0.50
+
+    elif hierarchy_depth == 1:
+        hierarchy_score = 0.25
+
+    else:
+        hierarchy_score = 0.0
+
+    score = (
+        0.30 * heading_score
+        + 0.10 * subsection_score
+        + 0.10 * paragraph_score
+        + 0.05 * nested_score
+        + 0.30 * text_score
+        + 0.15 * hierarchy_score
+    )
+
+    return score
 
 
 # ============================================================
-# STRUCTURE-AWARE RETRIEVER
+# BASELINE RETRIEVAL
+# ============================================================
+
+def retrieve_baseline(
+    vectorstore,
+    query,
+    k=5,
+):
+
+    results = (
+        vectorstore
+        .similarity_search_with_score(
+            query,
+            k=k,
+        )
+    )
+
+    return results
+
+
+# ============================================================
+# STRUCTURE-AWARE CANDIDATE RETRIEVAL
+# ============================================================
+
+def retrieve_structure_candidates(
+    vectorstore,
+    query,
+    candidate_k=50,
+):
+
+    results = (
+        vectorstore
+        .similarity_search_with_score(
+            query,
+            k=candidate_k,
+        )
+    )
+
+    return results
+
+
+# ============================================================
+# STRUCTURE-AWARE RERANKING
+# ============================================================
+
+def rerank_structure_candidates(
+    query,
+    candidates,
+    final_k=5,
+):
+
+    reranked = []
+
+    for document, distance in candidates:
+
+        semantic_score = (
+            1.0
+            / (1.0 + float(distance))
+        )
+
+        structure_score = (
+            calculate_structure_score(
+                query,
+                document,
+            )
+        )
+
+        final_score = (
+            0.65 * semantic_score
+            + 0.35 * structure_score
+        )
+
+        reranked.append(
+            {
+                "document": document,
+                "distance": distance,
+                "semantic_score": semantic_score,
+                "structure_score": structure_score,
+                "final_score": final_score,
+            }
+        )
+
+    reranked.sort(
+        key=lambda x: x["final_score"],
+        reverse=True,
+    )
+
+    return reranked
+
+
+# ============================================================
+# GROUP BY SECTION
+# ============================================================
+
+def group_by_section(
+    reranked_candidates,
+    final_k=5,
+):
+
+    section_groups = {}
+
+    for result in reranked_candidates:
+
+        document = result["document"]
+
+        metadata = document.metadata
+
+        act = metadata.get(
+            "act",
+            "",
+        )
+
+        section = metadata.get(
+            "section",
+            "",
+        )
+
+        key = (
+            act,
+            section,
+        )
+
+        if key not in section_groups:
+
+            section_groups[key] = result
+
+        else:
+
+            existing = section_groups[key]
+
+            if (
+                result["final_score"]
+                > existing["final_score"]
+            ):
+
+                section_groups[key] = result
+
+    sections = list(
+        section_groups.values()
+    )
+
+    sections.sort(
+        key=lambda x: x["final_score"],
+        reverse=True,
+    )
+
+    return sections[:final_k]
+
+
+# ============================================================
+# EXPAND PARENT CONTEXT
+# ============================================================
+
+def expand_parent_context(
+    ranked_sections,
+    all_structure_documents,
+    max_related=10,
+):
+
+    section_index = {}
+
+    for document in all_structure_documents:
+
+        metadata = document.metadata
+
+        key = (
+            metadata.get("act", ""),
+            metadata.get("section", ""),
+        )
+
+        if key not in section_index:
+
+            section_index[key] = []
+
+        section_index[key].append(
+            document
+        )
+
+    expanded = []
+
+    for rank, result in enumerate(
+        ranked_sections,
+        start=1,
+    ):
+
+        document = result["document"]
+
+        metadata = document.metadata
+
+        key = (
+            metadata.get("act", ""),
+            metadata.get("section", ""),
+        )
+
+        context_chunks = list(
+            section_index.get(
+                key,
+                [],
+            )
+        )
+
+        def structural_order(doc):
+
+            md = doc.metadata
+
+            return (
+                str(md.get("subsection", "")),
+                str(md.get("paragraph", "")),
+                str(md.get("nested_paragraph", "")),
+            )
+
+        context_chunks.sort(
+            key=structural_order
+        )
+
+        if max_related > 0:
+
+            context_chunks = context_chunks[
+                :max_related
+            ]
+
+        expanded.append(
+            {
+                "rank": rank,
+                "result": result,
+                "context_chunks": context_chunks,
+            }
+        )
+
+    return expanded
+
+
+# ============================================================
+# RETRIEVER CLASS
 # ============================================================
 
 class StructureAwareRetriever:
-    """
-    Structure-aware legal retriever.
 
-    Retrieval pipeline:
+    def __init__(self):
 
-        Original query
-              +
-        Expanded query
-              |
-              v
-        Semantic retrieval
-              |
-              v
-        Legal-term matching
-              |
-              v
-        Candidate sections
-              |
-              v
-        Structural expansion
-              |
-              v
-        Re-ranking
-              |
-              v
-        Final results
-    """
-
-    def __init__(
-        self,
-        index_path=INDEX_PATH,
-        metadata_path=METADATA_PATH,
-        model_name=MODEL_NAME,
-    ):
-
-        print("Loading embedding model...")
-
-        self.model = SentenceTransformer(
-            model_name
+        print(
+            "Initialising Structure-Aware Retriever..."
         )
 
-        print("Loading FAISS index...")
+        self.embeddings = create_embeddings()
 
-        self.index = faiss.read_index(
-            str(index_path)
-        )
+        self.baseline_vectorstore = None
+        self.structure_vectorstore = None
 
-        print("Loading metadata...")
+        self.structure_documents = None
 
-        with open(
-            metadata_path,
-            "r",
-            encoding="utf-8"
-        ) as file:
+        self._load_vectorstores()
 
-            self.metadata = json.load(file)
+    # --------------------------------------------------------
+    # LOAD EXISTING VECTORSTORES
+    # --------------------------------------------------------
 
-        if self.index.ntotal != len(
-            self.metadata
-        ):
+    def _load_vectorstores(self):
 
-            raise ValueError(
-                "FAISS index and metadata counts "
-                "do not match."
+        if not BASELINE_VECTORSTORE.exists():
+
+            raise FileNotFoundError(
+                f"Baseline vectorstore not found: "
+                f"{BASELINE_VECTORSTORE}\n"
+                "Run structure_retrieval.py first "
+                "to build the vectorstores."
             )
 
-        print(
-            f"Vectors: {self.index.ntotal}"
-        )
+        if not STRUCTURE_VECTORSTORE.exists():
 
-        print(
-            f"Dimensions: {self.index.d}"
-        )
-
-        print(
-            f"Metadata records: "
-            f"{len(self.metadata)}"
-        )
-
-        # ----------------------------------------------------
-        # Build section lookup
-        # ----------------------------------------------------
-
-        self.section_lookup = {}
-
-        for index_id, item in enumerate(
-            self.metadata
-        ):
-
-            metadata = item.get(
-                "metadata",
-                {}
+            raise FileNotFoundError(
+                f"Structure vectorstore not found: "
+                f"{STRUCTURE_VECTORSTORE}\n"
+                "Run structure_retrieval.py first "
+                "to build the vectorstores."
             )
 
-            citation = metadata.get(
-                "citation"
-            )
-
-            if citation:
-
-                self.section_lookup.setdefault(
-                    citation,
-                    []
-                ).append(index_id)
-
-        print(
-            f"Legal sections indexed: "
-            f"{len(self.section_lookup)}"
+        self.baseline_vectorstore = Chroma(
+            collection_name=BASELINE_COLLECTION,
+            persist_directory=str(
+                BASELINE_VECTORSTORE
+            ),
+            embedding_function=self.embeddings,
         )
 
-    # ========================================================
-    # EMBEDDING
-    # ========================================================
-
-    def embed_query(self, query):
-
-        embedding = self.model.encode(
-            [query],
-            normalize_embeddings=True
+        self.structure_vectorstore = Chroma(
+            collection_name=STRUCTURE_COLLECTION,
+            persist_directory=str(
+                STRUCTURE_VECTORSTORE
+            ),
+            embedding_function=self.embeddings,
         )
 
-        return np.asarray(
-            embedding,
-            dtype="float32"
+        self.structure_documents = (
+            load_structure_documents()
         )
 
-    # ========================================================
-    # SEMANTIC RETRIEVAL
-    # ========================================================
+    # --------------------------------------------------------
+    # BASELINE SEMANTIC RETRIEVAL
+    # --------------------------------------------------------
 
     def semantic_retrieve(
         self,
         query,
-        top_k=SEMANTIC_TOP_K
+        top_k=5,
     ):
 
-        query_embedding = self.embed_query(
-            query
+        results = (
+            self.baseline_vectorstore
+            .similarity_search_with_score(
+                query,
+                k=top_k,
+            )
         )
 
-        scores, indices = self.index.search(
-            query_embedding,
-            top_k
-        )
+        formatted = []
 
-        results = []
+        for document, distance in results:
 
-        for score, index_id in zip(
-            scores[0],
-            indices[0]
-        ):
-
-            if index_id < 0:
-                continue
-
-            item = self.metadata[
-                index_id
-            ]
-
-            results.append(
+            formatted.append(
                 {
-                    "index_id": int(
-                        index_id
+                    "text": document.page_content,
+                    "metadata": document.metadata,
+                    "distance": float(distance),
+                    "score": (
+                        1.0
+                        / (1.0 + float(distance))
                     ),
-
-                    "score": float(
-                        score
-                    ),
-
-                    "semantic_score": float(
-                        score
-                    ),
-
-                    "text": item.get(
-                        "text",
-                        ""
-                    ),
-
-                    "retrieval_text": item.get(
-                        "retrieval_text",
-                        ""
-                    ),
-
-                    "metadata": item.get(
-                        "metadata",
-                        {}
-                    ),
-
-                    "retrieval_type": "semantic",
+                    "retrieval_type": "baseline",
                 }
             )
 
-        return results
-
-    # ========================================================
-    # LEXICAL MATCHING
-    # ========================================================
-
-    def lexical_score(
-        self,
-        query,
-        result
-    ):
-        """
-        Measures overlap between important query
-        terms and the retrieved legal text.
-
-        This is deliberately simple and transparent.
-        """
-
-        query_terms = important_terms(
-            query
-        )
-
-        if not query_terms:
-            return 0.0
-
-        metadata = result.get(
-            "metadata",
-            {}
-        )
-
-        text = " ".join(
-            [
-                metadata.get(
-                    "section_title",
-                    ""
-                ),
-                result.get(
-                    "text",
-                    ""
-                ),
-                result.get(
-                    "retrieval_text",
-                    ""
-                ),
-            ]
-        )
-
-        document_terms = important_terms(
-            text
-        )
-
-        overlap = (
-            query_terms
-            &
-            document_terms
-        )
-
-        return len(overlap) / len(
-            query_terms
-        )
-
-    # ========================================================
-    # COMBINE ORIGINAL + EXPANDED QUERY
-    # ========================================================
-
-    def retrieve_semantic_candidates(
-        self,
-        original_query,
-        expanded_query,
-        top_k=SEMANTIC_TOP_K
-    ):
-        """
-        Retrieve using both the original and expanded query.
-
-        This prevents query expansion from completely
-        replacing important wording from the original question.
-        """
-
-        original_results = (
-            self.semantic_retrieve(
-                original_query,
-                top_k=top_k
-            )
-        )
-
-        expanded_results = (
-            self.semantic_retrieve(
-                expanded_query,
-                top_k=top_k
-            )
-        )
-
-        candidates = {}
-
-        # ----------------------------------------------------
-        # Add original-query results
-        # ----------------------------------------------------
-
-        for result in original_results:
-
-            index_id = result[
-                "index_id"
-            ]
-
-            candidates.setdefault(
-                index_id,
-                {
-                    **result,
-                    "original_score": 0.0,
-                    "expanded_score": 0.0,
-                }
-            )
-
-            candidates[
-                index_id
-            ][
-                "original_score"
-            ] = max(
-                candidates[
-                    index_id
-                ][
-                    "original_score"
-                ],
-                result[
-                    "score"
-                ]
-            )
-
-        # ----------------------------------------------------
-        # Add expanded-query results
-        # ----------------------------------------------------
-
-        for result in expanded_results:
-
-            index_id = result[
-                "index_id"
-            ]
-
-            candidates.setdefault(
-                index_id,
-                {
-                    **result,
-                    "original_score": 0.0,
-                    "expanded_score": 0.0,
-                }
-            )
-
-            candidates[
-                index_id
-            ][
-                "expanded_score"
-            ] = max(
-                candidates[
-                    index_id
-                ][
-                    "expanded_score"
-                ],
-                result[
-                    "score"
-                ]
-            )
-
-        # ----------------------------------------------------
-        # Calculate combined scores
-        # ----------------------------------------------------
-
-        final_candidates = []
-
-        for result in candidates.values():
-
-            original_score = result[
-                "original_score"
-            ]
-
-            expanded_score = result[
-                "expanded_score"
-            ]
-
-            lexical = self.lexical_score(
-                original_query,
-                result
-            )
-
-            # ------------------------------------------------
-            # Weighted score
-            #
-            # Original query:
-            # 45%
-            #
-            # Expanded query:
-            # 35%
-            #
-            # Legal-term overlap:
-            # 20%
-            # ------------------------------------------------
-
-            combined_score = (
-                0.45 * original_score
-                +
-                0.35 * expanded_score
-                +
-                0.20 * lexical
-            )
-
-            result[
-                "lexical_score"
-            ] = lexical
-
-            result[
-                "combined_score"
-            ] = combined_score
-
-            result[
-                "score"
-            ] = combined_score
-
-            result[
-                "query_source"
-            ] = "original + expanded"
-
-            final_candidates.append(
-                result
-            )
-
-        final_candidates.sort(
-            key=lambda x: x[
-                "combined_score"
-            ],
-            reverse=True
-        )
-
-        return final_candidates
-
-    # ========================================================
-    # STRUCTURAL EXPANSION
-    # ========================================================
-
-    def expand_structure(
-        self,
-        semantic_results,
-        original_query,
-        max_sections=MAX_SECTIONS
-    ):
-        """
-        Structure-aware expansion.
-
-        Instead of treating every chunk from the same CFR section
-        equally, this method gives a bonus to chunks whose legal
-        paragraph/subparagraph matches important terms in the query.
-
-        Example:
-
-            Query mentions "ceases to be agricultural"
-            -> prefer 7 CFR 781.3 (i)
-
-            Query mentions "becomes agricultural"
-            -> prefer 7 CFR 781.3 (d)
-
-            Query mentions "filed"
-            -> prefer 7 CFR 781.3 (a)
-        """
-
-        expanded = []
-
-        seen_sections = set()
-
-        query_terms = important_terms(
-            original_query
-        )
-
-        for result in semantic_results:
-
-            metadata = result.get(
-                "metadata",
-                {}
-            )
-
-            citation = metadata.get(
-                "citation"
-            )
-
-            if not citation:
-                continue
-
-            if citation in seen_sections:
-                continue
-
-            seen_sections.add(
-                citation
-            )
-
-            related_ids = self.section_lookup.get(
-                citation,
-                []
-            )
-
-            section_score = result.get(
-                "combined_score",
-                result.get("score", 0.0)
-            )
-
-            for index_id in related_ids:
-
-                item = self.metadata[
-                    index_id
-                ]
-
-                item_metadata = item.get(
-                    "metadata",
-                    {}
-                )
-
-                structural_result = {
-                    "index_id": index_id,
-
-                    "text": item.get(
-                        "text",
-                        ""
-                    ),
-
-                    "retrieval_text": item.get(
-                        "retrieval_text",
-                        ""
-                    ),
-
-                    "metadata": item_metadata,
-
-                    "retrieval_type":
-                        "structural",
-
-                    "section_score":
-                        section_score,
-
-                    "original_score":
-                        result.get(
-                            "original_score",
-                            0.0
-                        ),
-
-                    "expanded_score":
-                        result.get(
-                            "expanded_score",
-                            0.0
-                        ),
-                }
-
-                # ------------------------------------------------
-                # Lexical relevance
-                # ------------------------------------------------
-
-                lexical = self.lexical_score(
-                    original_query,
-                    structural_result
-                )
-
-                structural_result[
-                    "lexical_score"
-                ] = lexical
-
-                # ------------------------------------------------
-                # Build structural label
-                # ------------------------------------------------
-
-                paragraph = item_metadata.get(
-                    "paragraph"
-                )
-
-                subparagraph = item_metadata.get(
-                    "subparagraph"
-                )
-
-                clause = item_metadata.get(
-                    "clause"
-                )
-
-                structural_label = " ".join(
-                    part
-                    for part in [
-                        paragraph,
-                        subparagraph,
-                        clause
-                    ]
-                    if part
-                )
-
-                # ------------------------------------------------
-                # Calculate relevance of the actual paragraph
-                # ------------------------------------------------
-
-                paragraph_text = " ".join(
-                    [
-                        structural_label,
-                        item_metadata.get(
-                            "section_title",
-                            ""
-                        ),
-                        item.get(
-                            "text",
-                            ""
-                        ),
-                        item.get(
-                            "retrieval_text",
-                            ""
-                        ),
-                    ]
-                )
-
-                paragraph_terms = important_terms(
-                    paragraph_text
-                )
-
-                paragraph_overlap = (
-                    len(
-                        query_terms
-                        &
-                        paragraph_terms
-                    )
-                    /
-                    len(query_terms)
-                    if query_terms
-                    else 0.0
-                )
-
-                # ------------------------------------------------
-                # Structural paragraph matching
-                # ------------------------------------------------
-
-                structural_bonus = 0.0
-
-                # Strong bonus when the actual paragraph has
-                # strong lexical relevance to the question.
-                if paragraph_overlap >= 0.50:
-                    structural_bonus = 0.20
-
-                elif paragraph_overlap >= 0.25:
-                    structural_bonus = 0.10
-
-                # ------------------------------------------------
-                # Final structural score
-                #
-                # 65% parent semantic score
-                # 20% lexical relevance
-                # 15% paragraph relevance
-                # ------------------------------------------------
-
-                structural_score = (
-                    0.65 * section_score
-                    +
-                    0.20 * lexical
-                    +
-                    0.15 * paragraph_overlap
-                    +
-                    structural_bonus
-                )
-
-                structural_result[
-                    "paragraph_overlap"
-                ] = paragraph_overlap
-
-                structural_result[
-                    "structural_bonus"
-                ] = structural_bonus
-
-                structural_result[
-                    "score"
-                ] = structural_score
-
-                expanded.append(
-                    structural_result
-                )
-
-            if len(
-                seen_sections
-            ) >= max_sections:
-
-                break
-
-        return expanded
-
-    # ========================================================
-    # FINAL RETRIEVAL
-    # ========================================================
+        return formatted
+
+    # --------------------------------------------------------
+    # STRUCTURE-AWARE RETRIEVAL
+    # --------------------------------------------------------
 
     def retrieve(
         self,
         query,
         expanded_query=None,
         top_k=5,
-        max_related=10
+        max_related=10,
     ):
-        """
-        Complete retrieval pipeline.
-        """
 
-        # ----------------------------------------------------
-        # Query expansion
-        # ----------------------------------------------------
+        retrieval_query = (
+            expanded_query
+            if expanded_query
+            else query
+        )
 
-        if expanded_query is None:
-
-            expanded_query = (
-                expand_query(
-                    query
-                )
-            )
-
-        # ----------------------------------------------------
-        # Step 1:
-        # Semantic retrieval using both queries
-        # ----------------------------------------------------
-
-        semantic_candidates = (
-            self.retrieve_semantic_candidates(
-                query,
-                expanded_query,
-                top_k=SEMANTIC_TOP_K
+        candidates = (
+            retrieve_structure_candidates(
+                self.structure_vectorstore,
+                retrieval_query,
+                candidate_k=50,
             )
         )
 
-        # ----------------------------------------------------
-        # Step 2:
-        # Structural expansion
-        # ----------------------------------------------------
-
-        structural_candidates = (
-            self.expand_structure(
-                semantic_candidates,
-                query,
-                max_sections=MAX_SECTIONS
+        reranked = (
+            rerank_structure_candidates(
+                retrieval_query,
+                candidates,
             )
         )
 
-        # ----------------------------------------------------
-        # Step 3:
-        # Combine results
-        # ----------------------------------------------------
+        ranked_sections = (
+            group_by_section(
+                reranked,
+                final_k=top_k,
+            )
+        )
 
-        combined = []
+        expanded = (
+            expand_parent_context(
+                ranked_sections,
+                self.structure_documents,
+                max_related=max_related,
+            )
+        )
 
-        seen = set()
+        formatted = []
 
-        # ----------------------------------------------------
-        # Semantic candidates
-        # ----------------------------------------------------
+        for item in expanded:
 
-        for result in semantic_candidates:
+            main_result = item["result"]
 
-            index_id = result[
-                "index_id"
+            main_document = (
+                main_result["document"]
+            )
+
+            metadata = (
+                main_document.metadata
+            )
+
+            context_chunks = item[
+                "context_chunks"
             ]
 
-            if index_id in seen:
-                continue
-
-            combined.append(
-                result
+            combined_text = "\n\n".join(
+                document.page_content
+                for document in context_chunks
             )
 
-            seen.add(
-                index_id
+            formatted.append(
+                {
+                    "text": combined_text,
+                    "metadata": metadata,
+                    "distance": float(
+                        main_result["distance"]
+                    ),
+                    "semantic_score": float(
+                        main_result["semantic_score"]
+                    ),
+                    "structure_score": float(
+                        main_result["structure_score"]
+                    ),
+                    "score": float(
+                        main_result["final_score"]
+                    ),
+                    "final_score": float(
+                        main_result["final_score"]
+                    ),
+                    "retrieval_type": "structure-aware",
+                    "context_chunks": context_chunks,
+                }
             )
 
-        # ----------------------------------------------------
-        # Structural candidates
-        # ----------------------------------------------------
-
-        for result in structural_candidates:
-
-            index_id = result[
-                "index_id"
-            ]
-
-            if index_id in seen:
-                continue
-
-            combined.append(
-                result
-            )
-
-            seen.add(
-                index_id
-            )
-
-        # ----------------------------------------------------
-        # Step 4:
-        # Final ranking
-        # ----------------------------------------------------
-
-        combined.sort(
-            key=lambda x: x[
-                "score"
-            ],
-            reverse=True
-        )
-
-        # ----------------------------------------------------
-        # Step 5:
-        # Return requested amount
-        # ----------------------------------------------------
-
-        return combined[
-            :(top_k + max_related)
-        ]
+        return formatted
 
 
 # ============================================================
-# TEST
+# EXPERIMENT
 # ============================================================
+
+def main():
+
+    print("\n")
+
+    print("=" * 80)
+
+    print(
+        "STRUCTURE-AWARE PROPERTY LAW "
+        "RETRIEVAL EXPERIMENT"
+    )
+
+    print("=" * 80)
+
+    print("\nTest query:")
+    print(TEST_QUERY)
+
+    embeddings = create_embeddings()
+
+    baseline_documents = (
+        load_baseline_documents()
+    )
+
+    structure_documents = (
+        load_structure_documents()
+    )
+
+    reset_vectorstore(
+        BASELINE_VECTORSTORE
+    )
+
+    reset_vectorstore(
+        STRUCTURE_VECTORSTORE
+    )
+
+    baseline_vectorstore = (
+        build_vectorstore(
+            documents=baseline_documents,
+            persist_directory=BASELINE_VECTORSTORE,
+            collection_name=BASELINE_COLLECTION,
+            embeddings=embeddings,
+        )
+    )
+
+    structure_vectorstore = (
+        build_vectorstore(
+            documents=structure_documents,
+            persist_directory=STRUCTURE_VECTORSTORE,
+            collection_name=STRUCTURE_COLLECTION,
+            embeddings=embeddings,
+        )
+    )
+
+    baseline_results = (
+        retrieve_baseline(
+            baseline_vectorstore,
+            TEST_QUERY,
+            k=5,
+        )
+    )
+
+    candidates = (
+        retrieve_structure_candidates(
+            structure_vectorstore,
+            TEST_QUERY,
+            candidate_k=50,
+        )
+    )
+
+    reranked_candidates = (
+        rerank_structure_candidates(
+            TEST_QUERY,
+            candidates,
+        )
+    )
+
+    structure_results = (
+        group_by_section(
+            reranked_candidates,
+            final_k=5,
+        )
+    )
+
+    expanded_results = (
+        expand_parent_context(
+            structure_results,
+            structure_documents,
+            max_related=10,
+        )
+    )
+
+    print("\n" + "=" * 80)
+    print("EXPERIMENT COMPLETE")
+    print("=" * 80)
+
+    print(
+        f"\nBaseline documents: "
+        f"{len(baseline_documents)}"
+    )
+
+    print(
+        f"Structure documents: "
+        f"{len(structure_documents)}"
+    )
+
+    print(
+        f"\nBaseline top results: "
+        f"{len(baseline_results)}"
+    )
+
+    print(
+        f"Structure-aware top results: "
+        f"{len(structure_results)}"
+    )
+
+    print(
+        f"Expanded results: "
+        f"{len(expanded_results)}"
+    )
+
 
 if __name__ == "__main__":
-
-    retriever = StructureAwareRetriever()
-
-    test_questions = [
-        "What happens when land becomes agricultural land after being acquired?",
-
-        "What must a foreign person do when land subsequently becomes agricultural land?",
-
-        "When must a report be filed for agricultural land?",
-
-        "foreign person land subsequently becomes agricultural land report within 90 days",
-
-        "What reporting requirement applies when land becomes agricultural land?",
-    ]
-
-    print()
-    print("=" * 80)
-    print("STRUCTURE-AWARE RETRIEVAL TEST")
-    print("=" * 80)
-
-    for query in test_questions:
-
-        print()
-        print("=" * 80)
-        print("ORIGINAL QUERY:")
-        print(query)
-
-        expanded = expand_query(
-            query
-        )
-
-        print()
-        print("EXPANDED QUERY:")
-        print(expanded)
-
-        results = retriever.retrieve(
-            query,
-            expanded_query=expanded,
-            top_k=5,
-            max_related=10
-        )
-
-        print()
-        print("FINAL RESULTS")
-        print("=" * 80)
-
-        for number, result in enumerate(
-            results,
-            start=1
-        ):
-
-            metadata = result[
-                "metadata"
-            ]
-
-            citation = metadata.get(
-                "citation",
-                "Unknown"
-            )
-
-            paragraph = metadata.get(
-                "paragraph"
-            )
-
-            subparagraph = metadata.get(
-                "subparagraph"
-            )
-
-            section_title = metadata.get(
-                "section_title"
-            )
-
-            location = citation
-
-            if paragraph:
-                location += (
-                    f" {paragraph}"
-                )
-
-            if subparagraph:
-                location += (
-                    f" {subparagraph}"
-                )
-
-            print(
-                f"\n{number}. {location}"
-            )
-
-            print(
-                f"   Score: "
-                f"{result['score']:.4f}"
-            )
-
-            print(
-                f"   Original score: "
-                f"{result.get('original_score', 0.0):.4f}"
-            )
-
-            print(
-                f"   Expanded score: "
-                f"{result.get('expanded_score', 0.0):.4f}"
-            )
-
-            print(
-                f"   Lexical score: "
-                f"{result.get('lexical_score', 0.0):.4f}"
-            )
-
-            print(
-                f"   Type: "
-                f"{result.get('retrieval_type')}"
-            )
-
-            print(
-                f"   Section: "
-                f"{section_title}"
-            )
-
-            print(
-                f"   Text: "
-                f"{result['text'][:500]}"
-            )
-
-            print("-" * 80)
+    main()

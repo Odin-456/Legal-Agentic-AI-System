@@ -1,140 +1,73 @@
-import os
+import streamlit as st
 
-from dotenv import load_dotenv
-from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
-from langchain_core.tools import tool
-
-from retrieval import LegalRetriever
+from legal_agent import answer_question
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-load_dotenv()
-
-MODEL_NAME = "gpt-5-mini"
-TOP_K = 5
+st.set_page_config(
+    page_title="Australian Property Law Assistant",
+    page_icon="⚖️"
+)
 
 
-# ============================================================
-# RETRIEVER
-# ============================================================
+st.title(
+    "Australian Property Law Assistant"
+)
 
-retriever = LegalRetriever()
+st.write(
+    "Ask a question about NSW property law."
+)
+
+question = st.text_area(
+    "Your question",
+    placeholder=(
+        "For example: "
+        "My landlord wants to increase my rent. "
+        "Can they do this?"
+    ),
+    height=120
+)
 
 
-# ============================================================
-# LEGAL RETRIEVAL TOOL
-# ============================================================
+if st.button("Ask Question"):
 
-@tool
-def search_legal_documents(query: str) -> str:
-    """
-    Search the eCFR legal document collection.
+    if not question.strip():
 
-    Use this tool when a question requires information
-    from the eCFR legal documents.
-    """
-
-    results = retriever.retrieve(
-        query,
-        top_k=TOP_K
-    )
-
-    if not results:
-        return "No relevant legal documents were found."
-
-    passages = []
-
-    for result in results:
-
-        citation = result["citation"]
-        paragraph = result["paragraph"]
-        text = result["text"]
-
-        location = citation
-
-        if paragraph:
-            location += paragraph
-
-        passages.append(
-            f"[{location}]\n{text}"
+        st.warning(
+            "Please enter a question."
         )
 
-    return "\n\n".join(passages)
+    else:
 
+        with st.spinner(
+            "Searching property-law documents..."
+        ):
 
-# ============================================================
-# LANGUAGE MODEL
-# ============================================================
+            answer, sources = answer_question(
+                question
+            )
 
-llm = ChatOpenAI(
-    model=MODEL_NAME,
-    temperature=0,
-    api_key=os.getenv("OPENAI_API_KEY"),
-)
+        st.subheader("Answer")
 
+        st.write(answer)
 
-# ============================================================
-# AGENT
-# ============================================================
+        if sources:
 
-agent = create_agent(
-    model=llm,
-    tools=[search_legal_documents],
-    system_prompt="""
-You are a legal information assistant specialising in
-the United States Code of Federal Regulations (eCFR).
+            st.subheader(
+                "Legal sources"
+            )
 
-When answering legal questions:
+            for source in sources:
 
-1. Use the search_legal_documents tool to retrieve
-   relevant eCFR passages.
+                metadata = source.get(
+                    "metadata",
+                    {}
+                )
 
-2. Base your answer only on the retrieved passages.
+                st.write(
+                    f"**{metadata.get('act', 'Unknown Act')}**"
+                )
 
-3. Do not invent legal information.
-
-4. Include the relevant eCFR citation in your answer.
-
-5. If the retrieved information is insufficient,
-   clearly state that the available documents do not
-   provide enough information.
-
-Provide a concise and clear answer.
-""",
-)
-
-
-# ============================================================
-# TEST
-# ============================================================
-
-if __name__ == "__main__":
-
-    query = (
-        "What happens when land becomes agricultural "
-        "land after being acquired?"
-    )
-
-    print("\nQUERY:")
-    print(query)
-
-    print("\nAGENT ANSWER:")
-
-    result = agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": query,
-                }
-            ]
-        }
-    )
-
-    print(
-        result["messages"][-1].content
-    )
+                st.write(
+                    f"Section: "
+                    f"{metadata.get('section', 'Unknown')}"
+                )
