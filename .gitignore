@@ -15,7 +15,9 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Generated data
-data/raw/
+data/raw/*
+!data/raw/australian_property_law/
+!data/raw/australian_property_law/*.xml
 data/processed/
 data/vectorstore/property_law/
 data/vectorstore/title-7/
