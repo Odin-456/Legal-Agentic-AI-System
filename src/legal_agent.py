@@ -11,16 +11,31 @@ from structure_retrieval import StructureAwareRetriever
 load_dotenv()
 
 
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 MODEL_NAME = "gpt-5-mini"
+
 TOP_K = 5
+
 MAX_RELATED = 10
 
 
-print("Initialising Structure-Aware NSW Property-Law Agent...")
+# ============================================================
+# RETRIEVER
+# ============================================================
 
+print(
+    "Initialising Structure-Aware NSW Property-Law Agent..."
+)
 
 retriever = StructureAwareRetriever()
 
+
+# ============================================================
+# SOURCE CITATION
+# ============================================================
 
 def format_source(metadata):
     """
@@ -39,9 +54,17 @@ def format_source(metadata):
 
     citation = f"{act} § {section}"
 
-    subsection = metadata.get("subsection")
-    paragraph = metadata.get("paragraph")
-    nested_paragraph = metadata.get("nested_paragraph")
+    subsection = metadata.get(
+        "subsection"
+    )
+
+    paragraph = metadata.get(
+        "paragraph"
+    )
+
+    nested_paragraph = metadata.get(
+        "nested_paragraph"
+    )
 
     if subsection:
         citation += f" {subsection}"
@@ -54,6 +77,10 @@ def format_source(metadata):
 
     return citation
 
+
+# ============================================================
+# PROPERTY-LAW SEARCH TOOL
+# ============================================================
 
 @tool
 def search_property_law(query: str) -> str:
@@ -80,49 +107,108 @@ def search_property_law(query: str) -> str:
 
     context_parts = []
 
-    for i, result in enumerate(results, start=1):
+    for i, result in enumerate(
+        results,
+        start=1
+    ):
 
         metadata = result.get(
             "metadata",
             {}
         )
 
-        citation = format_source(metadata)
+        citation = format_source(
+            metadata
+        )
 
         heading = metadata.get(
             "heading",
             ""
         )
 
-        text = result.get(
-            "text",
-            ""
+        # ----------------------------------------------------
+        # Get the related legal chunks
+        # ----------------------------------------------------
+
+        related_documents = result.get(
+            "related_documents",
+            []
         )
+
+        text_parts = []
+
+        for document in related_documents:
+
+            text_parts.append(
+                document.page_content
+            )
+
+        # ----------------------------------------------------
+        # Fallback to the main retrieved document
+        # ----------------------------------------------------
+
+        if not text_parts:
+
+            document = result.get(
+                "document"
+            )
+
+            if document is not None:
+
+                text_parts.append(
+                    document.page_content
+                )
+
+        legal_text = "\n".join(
+            text_parts
+        )
+
+        # ----------------------------------------------------
+        # Add source to context
+        # ----------------------------------------------------
 
         context_parts.append(
             f"""
 SOURCE {i}
-ACT AND SECTION: {citation}
-HEADING: {heading}
+
+ACT AND SECTION:
+{citation}
+
+HEADING:
+{heading}
 
 LEGAL TEXT:
-{text}
+{legal_text}
 """
         )
 
-    return "\n".join(context_parts)
+    return "\n".join(
+        context_parts
+    )
 
+
+# ============================================================
+# LANGUAGE MODEL
+# ============================================================
 
 llm = ChatOpenAI(
     model=MODEL_NAME,
     temperature=0,
-    api_key=os.getenv("OPENAI_API_KEY"),
+    api_key=os.getenv(
+        "OPENAI_API_KEY"
+    ),
 )
 
 
+# ============================================================
+# AGENT
+# ============================================================
+
 agent = create_agent(
     model=llm,
-    tools=[search_property_law],
+    tools=[
+        search_property_law
+    ],
     system_prompt="""
 You are a NSW property-law research assistant.
 
@@ -171,6 +257,23 @@ When the user asks a legal question:
 14. Do not claim that a procedure is required unless the
     retrieved legislation supports that claim.
 
+15. When the retrieved text contains the answer, use that
+    text directly as the basis for the answer.
+
+16. If the question specifies a section, subsection,
+    paragraph, or nested paragraph, answer that specific
+    provision first.
+
+17. Do not discuss other subsections, paragraphs, or sections
+    unless they are necessary to answer the question.
+
+18. If the user asks about subsection (1), do not provide
+    information from subsection (2) unless subsection (2) is
+    necessary to understand the answer.
+
+19. Keep the answer focused on the user's question and the
+    retrieved legal text.
+
 When appropriate, structure the answer as:
 
 Short answer
@@ -186,11 +289,15 @@ Keep the answer grounded in the retrieved legislation.
 )
 
 
+# ============================================================
+# MANUAL TEST
+# ============================================================
+
 if __name__ == "__main__":
 
     question = (
-        "What happens if a landlord does not carry out "
-        "required repairs?"
+        "What responsibilities does an association have "
+        "under the Community Land Management Act 2021?"
     )
 
     print()
@@ -199,7 +306,9 @@ if __name__ == "__main__":
     print("=" * 80)
 
     print()
-    print(f"Question: {question}")
+    print(
+        f"Question: {question}"
+    )
 
     result = agent.invoke(
         {
@@ -212,7 +321,9 @@ if __name__ == "__main__":
         }
     )
 
-    answer = result["messages"][-1].content
+    answer = result[
+        "messages"
+    ][-1].content
 
     print()
     print("=" * 80)

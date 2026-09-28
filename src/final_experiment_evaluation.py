@@ -1,11 +1,25 @@
 import json
 import re
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from langchain_chroma import Chroma
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+
+# ============================================================
+# PROJECT PATH
+# ============================================================
+
+SRC_DIR = Path(__file__).resolve().parent
+
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+
+from structure_retrieval import StructureAwareRetriever
 
 
 # ============================================================
@@ -29,10 +43,6 @@ OUTPUT_FILE = Path(
 
 BASELINE_VECTORSTORE = Path(
     "data/vectorstore/property_law_baseline"
-)
-
-STRUCTURE_VECTORSTORE = Path(
-    "data/vectorstore/property_law_structure"
 )
 
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -61,7 +71,7 @@ llm = ChatOpenAI(
 
 
 # ============================================================
-# VECTOR STORES
+# BASELINE VECTOR STORE
 # ============================================================
 
 baseline_vectorstore = Chroma(
@@ -70,10 +80,13 @@ baseline_vectorstore = Chroma(
     embedding_function=embeddings,
 )
 
-structure_vectorstore = Chroma(
-    collection_name="property_law_structure",
-    persist_directory=str(STRUCTURE_VECTORSTORE),
-    embedding_function=embeddings,
+
+# ============================================================
+# STRUCTURE-AWARE RETRIEVER
+# ============================================================
+
+structure_retriever = StructureAwareRetriever(
+    candidate_k=STRUCTURE_CANDIDATES
 )
 
 
@@ -82,6 +95,7 @@ structure_vectorstore = Chroma(
 # ============================================================
 
 def normalize_act(act):
+
     if act is None:
         return ""
 
@@ -119,10 +133,14 @@ def normalize_act(act):
             "community land management act 2021",
     }
 
-    return aliases.get(act, act)
+    return aliases.get(
+        act,
+        act
+    )
 
 
 def normalize_section(section):
+
     if section is None:
         return ""
 
@@ -142,6 +160,7 @@ def normalize_section(section):
 # ============================================================
 
 def get_metadata(document):
+
     if hasattr(document, "metadata"):
         return document.metadata
 
@@ -155,6 +174,7 @@ def get_metadata(document):
 
 
 def get_page_content(document):
+
     if hasattr(document, "page_content"):
         return document.page_content
 
@@ -172,7 +192,10 @@ def document_is_relevant(
     expected_act,
     expected_section
 ):
-    metadata = get_metadata(document)
+
+    metadata = get_metadata(
+        document
+    )
 
     act = normalize_act(
         metadata.get("act")
@@ -183,7 +206,9 @@ def document_is_relevant(
     )
 
     return (
-        act == normalize_act(expected_act)
+        act == normalize_act(
+            expected_act
+        )
         and
         section == normalize_section(
             expected_section
@@ -209,253 +234,50 @@ def retrieve_baseline(question):
 
 
 # ============================================================
-# STRUCTURE SCORING
-# ============================================================
-
-def calculate_structure_score(
-    document,
-    question
-):
-    """
-    Calculates the structural component of the
-    structure-aware retrieval score.
-
-    This follows the scoring weights used by the
-    existing structure-aware retrieval implementation.
-    """
-
-    metadata = get_metadata(document)
-
-    heading = str(
-        metadata.get("heading", "")
-    ).lower()
-
-    subsection = str(
-        metadata.get("subsection", "")
-    ).lower()
-
-    paragraph = str(
-        metadata.get("paragraph", "")
-    ).lower()
-
-    nested = str(
-        metadata.get("nested_paragraph", "")
-    ).lower()
-
-    hierarchy = str(
-        metadata.get("hierarchy", "")
-    )
-
-    text = get_page_content(
-        document
-    ).lower()
-
-    query = question.lower()
-
-    # --------------------------------------------------------
-    # Query token overlap
-    # --------------------------------------------------------
-
-    query_words = set(
-        re.findall(
-            r"\b[a-zA-Z0-9]+\b",
-            query
-        )
-    )
-
-    def overlap(value):
-
-        if not value:
-            return 0.0
-
-        value_words = set(
-            re.findall(
-                r"\b[a-zA-Z0-9]+\b",
-                value
-            )
-        )
-
-        if not query_words:
-            return 0.0
-
-        return (
-            len(
-                query_words.intersection(
-                    value_words
-                )
-            )
-            /
-            len(query_words)
-        )
-
-    heading_score = overlap(
-        heading
-    )
-
-    subsection_score = overlap(
-        subsection
-    )
-
-    paragraph_score = overlap(
-        paragraph
-    )
-
-    nested_score = overlap(
-        nested
-    )
-
-    text_score = overlap(
-        text
-    )
-
-    # --------------------------------------------------------
-    # Hierarchy depth
-    # --------------------------------------------------------
-
-    hierarchy_parts = [
-        part.strip()
-        for part in hierarchy.split(">")
-        if part.strip()
-    ]
-
-    depth = len(
-        hierarchy_parts
-    )
-
-    if depth >= 4:
-        hierarchy_score = 1.0
-
-    elif depth == 3:
-        hierarchy_score = 0.75
-
-    elif depth == 2:
-        hierarchy_score = 0.50
-
-    elif depth == 1:
-        hierarchy_score = 0.25
-
-    else:
-        hierarchy_score = 0.0
-
-    # --------------------------------------------------------
-    # Structure score
-    # --------------------------------------------------------
-
-    structure_score = (
-        0.30 * heading_score
-        + 0.10 * subsection_score
-        + 0.10 * paragraph_score
-        + 0.05 * nested_score
-        + 0.30 * text_score
-        + 0.15 * hierarchy_score
-    )
-
-    return structure_score
-
-
-# ============================================================
 # STRUCTURE-AWARE RETRIEVAL
 # ============================================================
 
 def retrieve_structure(question):
     """
-    Structure-aware retrieval.
-
-    Process:
-
-    1. Retrieve semantic candidates using distances.
-    2. Calculate semantic score.
-    3. Calculate structure score.
-    4. Combine semantic + structure scores.
-    5. Remove duplicate Act/section results.
-    6. Return top-k sections.
+    Uses the same structure-aware retrieval pipeline
+    as the prototype legal agent.
     """
 
-    candidates = (
-        structure_vectorstore
-        .similarity_search_with_score(
-            question,
-            k=STRUCTURE_CANDIDATES
-        )
+    results = structure_retriever.retrieve(
+        question
     )
 
-    scored = []
+    documents = []
 
-    for document, distance in candidates:
+    context_documents = []
 
-        semantic_score = (
-            1.0
-            /
-            (
-                1.0
-                +
-                float(distance)
-            )
+    for result in results:
+
+        document = result.get(
+            "document"
         )
 
-        structure_score = (
-            calculate_structure_score(
-                document,
-                question
-            )
-        )
-
-        final_score = (
-            0.65 * semantic_score
-            +
-            0.35 * structure_score
-        )
-
-        scored.append(
-            (
-                final_score,
+        if document is not None:
+            documents.append(
                 document
             )
+
+        related_documents = result.get(
+            "related_documents",
+            []
         )
 
-    scored.sort(
-        key=lambda x: x[0],
-        reverse=True
+        for related_document in related_documents:
+
+            if related_document not in context_documents:
+                context_documents.append(
+                    related_document
+                )
+
+    return (
+        documents,
+        context_documents
     )
-
-    selected = []
-
-    seen_sections = set()
-
-    for score, document in scored:
-
-        metadata = get_metadata(
-            document
-        )
-
-        act = normalize_act(
-            metadata.get("act")
-        )
-
-        section = normalize_section(
-            metadata.get("section")
-        )
-
-        key = (
-            act,
-            section
-        )
-
-        if key in seen_sections:
-            continue
-
-        seen_sections.add(
-            key
-        )
-
-        selected.append(
-            document
-        )
-
-        if len(selected) >= TOP_K:
-            break
-
-    return selected
 
 
 # ============================================================
@@ -490,6 +312,21 @@ def build_context(documents):
             ""
         )
 
+        subsection = metadata.get(
+            "subsection",
+            ""
+        )
+
+        paragraph = metadata.get(
+            "paragraph",
+            ""
+        )
+
+        nested_paragraph = metadata.get(
+            "nested_paragraph",
+            ""
+        )
+
         text = get_page_content(
             document
         )
@@ -500,6 +337,9 @@ def build_context(documents):
 Act: {act}
 Section: {section}
 Heading: {heading}
+Subsection: {subsection}
+Paragraph: {paragraph}
+Nested paragraph: {nested_paragraph}
 
 {text}
 """
@@ -541,6 +381,12 @@ insufficient.
 
 When possible, identify the relevant Act and section.
 
+If the question specifies a section, subsection, paragraph,
+or nested paragraph, focus on that specific provision.
+
+Do not provide unrelated legal provisions unless they are
+necessary to answer the question.
+
 QUESTION:
 {question}
 
@@ -562,33 +408,19 @@ Provide a concise and accurate answer.
 # ============================================================
 
 def extract_json_object(raw_text):
-    """
-    Attempts to extract a JSON object from an LLM response.
-
-    Handles:
-    - plain JSON
-    - ```json ... ```
-    - surrounding explanatory text
-    """
 
     if not raw_text:
         return None
 
     text = raw_text.strip()
 
-    # --------------------------------------------------------
-    # First attempt: direct JSON
-    # --------------------------------------------------------
-
     try:
-        return json.loads(text)
+        return json.loads(
+            text
+        )
 
     except json.JSONDecodeError:
         pass
-
-    # --------------------------------------------------------
-    # Remove Markdown code fences
-    # --------------------------------------------------------
 
     text = re.sub(
         r"```(?:json)?",
@@ -603,16 +435,16 @@ def extract_json_object(raw_text):
     ).strip()
 
     try:
-        return json.loads(text)
+        return json.loads(
+            text
+        )
 
     except json.JSONDecodeError:
         pass
 
-    # --------------------------------------------------------
-    # Find first JSON object in response
-    # --------------------------------------------------------
-
-    start = text.find("{")
+    start = text.find(
+        "{"
+    )
 
     if start == -1:
         return None
@@ -647,6 +479,7 @@ def extract_json_object(raw_text):
             depth += 1
 
         elif char == "}":
+
             depth -= 1
 
             if depth == 0:
@@ -704,30 +537,70 @@ GENERATED ANSWER:
 TARGET SECTION RETRIEVED:
 {target_retrieved}
 
-Evaluate the generated answer.
+Evaluate the generated answer against the ground-truth
+legal provision and the retrieved legal context.
 
-IMPORTANT RULES:
+Evaluate the following four metrics using scores from
+0 to 100.
 
-1. The answer must actually answer the question.
+1. ANSWER CORRECTNESS
 
-2. A refusal such as "the context is insufficient"
-   is NOT a correct answer.
+How correctly does the answer answer the legal question?
 
-3. If the target section was not retrieved,
-   reasoning_correct MUST be false.
+100 = Fully correct.
+80-99 = Mostly correct with minor issues.
+60-79 = Partially correct with some important errors
+        or omissions.
+40-59 = Significant errors or omissions.
+1-39 = Mostly incorrect.
+0 = Completely incorrect or does not answer the question.
 
-4. Compare the answer against the ground-truth provision.
+2. GROUNDEDNESS
 
-5. Check whether the legal information is correct.
+How well are the answer's claims supported by the
+retrieved legal context?
 
-6. Identify factual or legal claims made by the answer.
+100 = All substantive claims are supported.
+80-99 = Almost all claims are supported.
+60-79 = Some important claims are unsupported.
+40-59 = Many claims are unsupported.
+1-39 = Most claims are unsupported.
+0 = The answer is not grounded in the retrieved context.
 
-7. A claim is unsupported if it cannot be supported
-   by the retrieved context.
+3. COMPLETENESS
 
-8. Do not reward an answer simply because it is cautious.
+How completely does the answer provide the important
+information required to answer the question?
 
-Reasoning score:
+100 = All important information is included.
+80-99 = Almost all important information is included.
+60-79 = Main answer is provided but some important
+        information is missing.
+40-59 = Substantial information is missing.
+1-39 = Very little required information is provided.
+0 = Required information is not provided.
+
+4. CITATION/SOURCE ACCURACY
+
+How accurately does the answer identify the relevant
+legal source?
+
+100 = Correct Act and section, and correct subsection
+      when applicable.
+80-99 = Mostly correct with a minor issue.
+60-79 = Partly correct but with an important omission.
+40-59 = Significant source errors.
+1-39 = Mostly incorrect.
+0 = Incorrect source or required source is not identified.
+
+The evaluation dataset provides expected Act and section
+information. Subsection-level ground truth is not available
+for every question, so only evaluate subsection accuracy
+when it can be determined from the supplied information.
+
+Also evaluate:
+
+REASONING SCORE:
 
 5 = Completely correct and directly answers the question.
 4 = Mostly correct with only minor omissions.
@@ -735,9 +608,23 @@ Reasoning score:
 2 = Mostly incorrect or materially incomplete.
 1 = Incorrect or does not answer the question.
 
+A claim is unsupported if it cannot be supported by the
+retrieved legal context.
+
+A refusal such as "the context is insufficient" is not a
+correct answer when the ground-truth provision contains
+enough information to answer the question.
+
+If the target section was not retrieved,
+reasoning_correct MUST be false.
+
 Return ONLY this JSON object:
 
 {{
+    "answer_correctness": 0,
+    "groundedness": 0,
+    "completeness": 0,
+    "citation_source_accuracy": 0,
     "reasoning_score": 1,
     "answers_question": false,
     "reasoning_correct": false,
@@ -760,20 +647,6 @@ def evaluate_answer(
     retrieved_documents,
     ground_truth_document
 ):
-    """
-    Evaluates:
-
-    - whether the answer answers the question
-    - reasoning correctness
-    - unsupported claims
-    - hallucination rate
-
-    The evaluator is given one retry if its first response
-    cannot be parsed as JSON.
-
-    Evaluator parsing failures are recorded separately.
-    They are NOT silently converted into a reasoning failure.
-    """
 
     target_retrieved = any(
         document_is_relevant(
@@ -787,6 +660,7 @@ def evaluate_answer(
     ground_truth = ""
 
     if ground_truth_document is not None:
+
         ground_truth = get_page_content(
             ground_truth_document
         )
@@ -807,12 +681,9 @@ def evaluate_answer(
 
     evaluator_parse_failed = False
     evaluator_retry_used = False
+
     evaluation = None
     raw_response = ""
-
-    # --------------------------------------------------------
-    # First evaluation attempt
-    # --------------------------------------------------------
 
     response = llm.invoke(
         prompt
@@ -833,9 +704,7 @@ def evaluate_answer(
         evaluator_retry_used = True
 
         retry_prompt = f"""
-Your previous evaluation response could not be parsed.
-
-Evaluate the following legal QA result again.
+Evaluate this legal QA result and return ONLY valid JSON.
 
 QUESTION:
 {question}
@@ -858,13 +727,31 @@ GENERATED ANSWER:
 TARGET SECTION RETRIEVED:
 {target_retrieved}
 
-Return ONLY valid JSON.
-Do not use Markdown.
-Do not add explanations outside the JSON.
+Give four scores from 0 to 100:
 
-Use exactly these fields:
+answer_correctness:
+How correctly the answer answers the question.
+
+groundedness:
+How well the answer is supported by the retrieved legal context.
+
+completeness:
+How completely the answer contains the important information
+required by the question.
+
+citation_source_accuracy:
+How accurately the answer identifies the correct Act and section,
+and subsection when applicable.
+
+Also give reasoning_score from 1 to 5.
+
+Return exactly:
 
 {{
+    "answer_correctness": 0,
+    "groundedness": 0,
+    "completeness": 0,
+    "citation_source_accuracy": 0,
     "reasoning_score": 1,
     "answers_question": false,
     "reasoning_correct": false,
@@ -872,16 +759,6 @@ Use exactly these fields:
     "unsupported_claims": 0,
     "explanation": "brief explanation"
 }}
-
-Reasoning score:
-5 = Completely correct.
-4 = Mostly correct with minor omissions.
-3 = Partially correct.
-2 = Mostly incorrect or materially incomplete.
-1 = Incorrect or does not answer.
-
-A refusal caused by insufficient retrieved context is NOT
-a correct answer.
 
 If the target section was not retrieved,
 reasoning_correct MUST be false.
@@ -910,10 +787,62 @@ reasoning_correct MUST be false.
             raw_response = retry_raw
 
     # --------------------------------------------------------
-    # Handle successful evaluation
+    # Successful evaluation
     # --------------------------------------------------------
 
     if evaluation is not None:
+
+        try:
+            answer_correctness = int(
+                evaluation.get(
+                    "answer_correctness",
+                    0
+                )
+            )
+        except (
+            TypeError,
+            ValueError
+        ):
+            answer_correctness = 0
+
+        try:
+            groundedness = int(
+                evaluation.get(
+                    "groundedness",
+                    0
+                )
+            )
+        except (
+            TypeError,
+            ValueError
+        ):
+            groundedness = 0
+
+        try:
+            completeness = int(
+                evaluation.get(
+                    "completeness",
+                    0
+                )
+            )
+        except (
+            TypeError,
+            ValueError
+        ):
+            completeness = 0
+
+        try:
+            citation_source_accuracy = int(
+                evaluation.get(
+                    "citation_source_accuracy",
+                    0
+                )
+            )
+        except (
+            TypeError,
+            ValueError
+        ):
+            citation_source_accuracy = 0
 
         try:
             reasoning_score = int(
@@ -928,25 +857,19 @@ reasoning_correct MUST be false.
         ):
             reasoning_score = 1
 
-        try:
-            answers_question = bool(
-                evaluation.get(
-                    "answers_question",
-                    False
-                )
+        answers_question = bool(
+            evaluation.get(
+                "answers_question",
+                False
             )
-        except Exception:
-            answers_question = False
+        )
 
-        try:
-            reasoning_correct = bool(
-                evaluation.get(
-                    "reasoning_correct",
-                    False
-                )
+        reasoning_correct = bool(
+            evaluation.get(
+                "reasoning_correct",
+                False
             )
-        except Exception:
-            reasoning_correct = False
+        )
 
         try:
             total_claims = int(
@@ -981,24 +904,80 @@ reasoning_correct MUST be false.
             )
         )
 
-    # --------------------------------------------------------
-    # Evaluator failed after retry
-    # --------------------------------------------------------
+        answer_correctness = max(
+            0,
+            min(
+                100,
+                answer_correctness
+            )
+        )
+
+        groundedness = max(
+            0,
+            min(
+                100,
+                groundedness
+            )
+        )
+
+        completeness = max(
+            0,
+            min(
+                100,
+                completeness
+            )
+        )
+
+        citation_source_accuracy = max(
+            0,
+            min(
+                100,
+                citation_source_accuracy
+            )
+        )
+
+        reasoning_score = max(
+            1,
+            min(
+                5,
+                reasoning_score
+            )
+        )
+
+        total_claims = max(
+            0,
+            total_claims
+        )
+
+        unsupported_claims = max(
+            0,
+            min(
+                unsupported_claims,
+                total_claims
+            )
+        )
 
     else:
+
+        answer_correctness = None
+        groundedness = None
+        completeness = None
+        citation_source_accuracy = None
 
         reasoning_score = None
         answers_question = None
         reasoning_correct = None
+
         total_claims = None
         unsupported_claims = None
+
         explanation = (
             "Evaluator response could not be parsed "
             "after retry."
         )
 
     # --------------------------------------------------------
-    # Objective correction
+    # Objective reasoning correction
     # --------------------------------------------------------
 
     if not evaluator_parse_failed:
@@ -1033,6 +1012,18 @@ reasoning_correct MUST be false.
         hallucination_rate = None
 
     return {
+        "answer_correctness":
+            answer_correctness,
+
+        "groundedness":
+            groundedness,
+
+        "completeness":
+            completeness,
+
+        "citation_source_accuracy":
+            citation_source_accuracy,
+
         "reasoning_score":
             reasoning_score,
 
@@ -1073,16 +1064,9 @@ reasoning_correct MUST be false.
 # ============================================================
 
 def build_ground_truth_lookup():
-    """
-    Retrieves ALL documents from the existing baseline
-    Chroma collection.
-
-    The baseline corpus contains 1,154 usable documents.
-    """
 
     collection_data = (
-        baseline_vectorstore
-        .get(
+        baseline_vectorstore.get(
             include=[
                 "documents",
                 "metadatas"
@@ -1154,6 +1138,7 @@ def precision_at_k(
     expected_section,
     k
 ):
+
     top_documents = documents[:k]
 
     if not top_documents:
@@ -1180,6 +1165,7 @@ def recall_at_k(
     expected_section,
     k
 ):
+
     top_documents = documents[:k]
 
     for document in top_documents:
@@ -1205,7 +1191,9 @@ def average(values):
     if not valid_values:
         return 0.0
 
-    return sum(valid_values) / len(
+    return sum(
+        valid_values
+    ) / len(
         valid_values
     )
 
@@ -1222,7 +1210,9 @@ def run_experiment():
         encoding="utf-8"
     ) as f:
 
-        dataset = json.load(f)
+        dataset = json.load(
+            f
+        )
 
     questions = dataset[
         "questions"
@@ -1245,6 +1235,19 @@ def run_experiment():
     )
 
     print(
+        "\nStructure-aware retrieval:"
+    )
+
+    print(
+        f"  Top sections: {TOP_K}"
+    )
+
+    print(
+        f"  Candidate chunks: "
+        f"{structure_retriever.candidate_k}"
+    )
+
+    print(
         "\nBuilding ground-truth lookup..."
     )
 
@@ -1257,14 +1260,16 @@ def run_experiment():
         f"{len(ground_truth_lookup)}"
     )
 
-    # --------------------------------------------------------
-    # Metric storage
-    # --------------------------------------------------------
-
     baseline_p1 = []
     baseline_p5 = []
     baseline_r1 = []
     baseline_r5 = []
+
+    baseline_answer_correctness = []
+    baseline_groundedness = []
+    baseline_completeness = []
+    baseline_citation_source_accuracy = []
+
     baseline_reasoning = []
     baseline_hallucination = []
 
@@ -1272,6 +1277,12 @@ def run_experiment():
     structure_p5 = []
     structure_r1 = []
     structure_r5 = []
+
+    structure_answer_correctness = []
+    structure_groundedness = []
+    structure_completeness = []
+    structure_citation_source_accuracy = []
+
     structure_reasoning = []
     structure_hallucination = []
 
@@ -1279,10 +1290,6 @@ def run_experiment():
 
     baseline_evaluator_failures = 0
     structure_evaluator_failures = 0
-
-    # --------------------------------------------------------
-    # Questions
-    # --------------------------------------------------------
 
     for index, item in enumerate(
         questions,
@@ -1395,8 +1402,23 @@ def run_experiment():
         )
 
         print(
-            f"  Baseline reasoning: "
-            f"{baseline_evaluation['reasoning_correct']}"
+            f"  Baseline answer correctness: "
+            f"{baseline_evaluation['answer_correctness']}"
+        )
+
+        print(
+            f"  Baseline groundedness: "
+            f"{baseline_evaluation['groundedness']}"
+        )
+
+        print(
+            f"  Baseline completeness: "
+            f"{baseline_evaluation['completeness']}"
+        )
+
+        print(
+            f"  Baseline source accuracy: "
+            f"{baseline_evaluation['citation_source_accuracy']}"
         )
 
         if baseline_evaluation[
@@ -1414,10 +1436,11 @@ def run_experiment():
         # STRUCTURE-AWARE
         # ====================================================
 
-        structure_documents = (
-            retrieve_structure(
-                question
-            )
+        (
+            structure_documents,
+            structure_context_documents
+        ) = retrieve_structure(
+            question
         )
 
         structure_p1_value = (
@@ -1464,7 +1487,7 @@ def run_experiment():
         structure_answer = (
             generate_answer(
                 question,
-                structure_documents
+                structure_context_documents
             )
         )
 
@@ -1474,14 +1497,29 @@ def run_experiment():
                 expected_act,
                 expected_section,
                 structure_answer,
-                structure_documents,
+                structure_context_documents,
                 ground_truth_document
             )
         )
 
         print(
-            f"  Structure reasoning: "
-            f"{structure_evaluation['reasoning_correct']}"
+            f"  Structure answer correctness: "
+            f"{structure_evaluation['answer_correctness']}"
+        )
+
+        print(
+            f"  Structure groundedness: "
+            f"{structure_evaluation['groundedness']}"
+        )
+
+        print(
+            f"  Structure completeness: "
+            f"{structure_evaluation['completeness']}"
+        )
+
+        print(
+            f"  Structure source accuracy: "
+            f"{structure_evaluation['citation_source_accuracy']}"
         )
 
         if structure_evaluation[
@@ -1494,10 +1532,6 @@ def run_experiment():
                 "  WARNING: structure evaluator "
                 "parse failed after retry."
             )
-
-        # ----------------------------------------------------
-        # Store retrieval metrics
-        # ----------------------------------------------------
 
         baseline_p1.append(
             baseline_p1_value
@@ -1514,6 +1548,46 @@ def run_experiment():
         baseline_r5.append(
             baseline_r5_value
         )
+
+        if baseline_evaluation[
+            "answer_correctness"
+        ] is not None:
+
+            baseline_answer_correctness.append(
+                baseline_evaluation[
+                    "answer_correctness"
+                ]
+            )
+
+        if baseline_evaluation[
+            "groundedness"
+        ] is not None:
+
+            baseline_groundedness.append(
+                baseline_evaluation[
+                    "groundedness"
+                ]
+            )
+
+        if baseline_evaluation[
+            "completeness"
+        ] is not None:
+
+            baseline_completeness.append(
+                baseline_evaluation[
+                    "completeness"
+                ]
+            )
+
+        if baseline_evaluation[
+            "citation_source_accuracy"
+        ] is not None:
+
+            baseline_citation_source_accuracy.append(
+                baseline_evaluation[
+                    "citation_source_accuracy"
+                ]
+            )
 
         if baseline_evaluation[
             "reasoning_correct"
@@ -1554,6 +1628,46 @@ def run_experiment():
         )
 
         if structure_evaluation[
+            "answer_correctness"
+        ] is not None:
+
+            structure_answer_correctness.append(
+                structure_evaluation[
+                    "answer_correctness"
+                ]
+            )
+
+        if structure_evaluation[
+            "groundedness"
+        ] is not None:
+
+            structure_groundedness.append(
+                structure_evaluation[
+                    "groundedness"
+                ]
+            )
+
+        if structure_evaluation[
+            "completeness"
+        ] is not None:
+
+            structure_completeness.append(
+                structure_evaluation[
+                    "completeness"
+                ]
+            )
+
+        if structure_evaluation[
+            "citation_source_accuracy"
+        ] is not None:
+
+            structure_citation_source_accuracy.append(
+                structure_evaluation[
+                    "citation_source_accuracy"
+                ]
+            )
+
+        if structure_evaluation[
             "reasoning_correct"
         ] is not None:
 
@@ -1574,10 +1688,6 @@ def run_experiment():
                     "hallucination_rate"
                 ]
             )
-
-        # ----------------------------------------------------
-        # Save question result
-        # ----------------------------------------------------
 
         results.append(
             {
@@ -1657,42 +1767,106 @@ def run_experiment():
 
     baseline_summary = {
         "precision_at_1":
-            average(baseline_p1),
+            average(
+                baseline_p1
+            ),
 
         "precision_at_5":
-            average(baseline_p5),
+            average(
+                baseline_p5
+            ),
 
         "recall_at_1":
-            average(baseline_r1),
+            average(
+                baseline_r1
+            ),
 
         "recall_at_5":
-            average(baseline_r5),
+            average(
+                baseline_r5
+            ),
+
+        "answer_correctness":
+            average(
+                baseline_answer_correctness
+            ),
+
+        "groundedness":
+            average(
+                baseline_groundedness
+            ),
+
+        "completeness":
+            average(
+                baseline_completeness
+            ),
+
+        "citation_source_accuracy":
+            average(
+                baseline_citation_source_accuracy
+            ),
 
         "reasoning_accuracy":
-            average(baseline_reasoning),
+            average(
+                baseline_reasoning
+            ),
 
         "hallucination_rate":
-            average(baseline_hallucination),
+            average(
+                baseline_hallucination
+            ),
     }
 
     structure_summary = {
         "precision_at_1":
-            average(structure_p1),
+            average(
+                structure_p1
+            ),
 
         "precision_at_5":
-            average(structure_p5),
+            average(
+                structure_p5
+            ),
 
         "recall_at_1":
-            average(structure_r1),
+            average(
+                structure_r1
+            ),
 
         "recall_at_5":
-            average(structure_r5),
+            average(
+                structure_r5
+            ),
+
+        "answer_correctness":
+            average(
+                structure_answer_correctness
+            ),
+
+        "groundedness":
+            average(
+                structure_groundedness
+            ),
+
+        "completeness":
+            average(
+                structure_completeness
+            ),
+
+        "citation_source_accuracy":
+            average(
+                structure_citation_source_accuracy
+            ),
 
         "reasoning_accuracy":
-            average(structure_reasoning),
+            average(
+                structure_reasoning
+            ),
 
         "hallucination_rate":
-            average(structure_hallucination),
+            average(
+                structure_hallucination
+            ),
     }
 
     difference = {
@@ -1722,6 +1896,18 @@ def run_experiment():
         "answer_model":
             ANSWER_MODEL,
 
+        "structure_retrieval":
+            {
+                "top_k_sections":
+                    TOP_K,
+
+                "candidate_k":
+                    structure_retriever.candidate_k,
+
+                "retriever":
+                    "StructureAwareRetriever",
+            },
+
         "reasoning_correct_threshold":
             REASONING_CORRECT_THRESHOLD,
 
@@ -1738,7 +1924,25 @@ def run_experiment():
         "recall_definition":
             "Each question has one target Act and section. "
             "Recall@k is 1 when the target section appears "
-            "within the top-k retrieved documents.",
+            "within the top-k retrieved sections.",
+
+        "answer_correctness_definition":
+            "Score from 0 to 100 representing how accurately "
+            "the generated answer answers the legal question.",
+
+        "groundedness_definition":
+            "Score from 0 to 100 representing how well the "
+            "generated answer is supported by retrieved legal context.",
+
+        "completeness_definition":
+            "Score from 0 to 100 representing how completely "
+            "the generated answer contains the important information "
+            "required by the question.",
+
+        "citation_source_accuracy_definition":
+            "Score from 0 to 100 representing how accurately "
+            "the generated answer identifies the relevant Act "
+            "and section, with subsection considered where applicable.",
 
         "reasoning_accuracy_definition":
             "A generated answer is reasoning-correct only "
@@ -1759,24 +1963,6 @@ def run_experiment():
 
                 "structure_aware":
                     structure_evaluator_failures,
-            },
-
-        "reasoning_evaluation_sample_size":
-            {
-                "baseline":
-                    len(baseline_reasoning),
-
-                "structure_aware":
-                    len(structure_reasoning),
-            },
-
-        "hallucination_evaluation_sample_size":
-            {
-                "baseline":
-                    len(baseline_hallucination),
-
-                "structure_aware":
-                    len(structure_hallucination),
             },
 
         "summary":
@@ -1827,55 +2013,121 @@ def run_experiment():
     print("=" * 80)
 
     print(
-        "\nMetric                         "
-        "Baseline      Structure"
+        "\nRetrieval Metrics"
+    )
+
+    print(
+        f"{'Metric':35s}"
+        f"{'Baseline':15s}"
+        f"{'Structure':15s}"
     )
 
     print("-" * 80)
 
     print(
-        f"Precision@1                   "
-        f"{baseline_summary['precision_at_1']:.4f}        "
+        f"{'Precision@1':35s}"
+        f"{baseline_summary['precision_at_1']:.4f}"
+        f"{'':8s}"
         f"{structure_summary['precision_at_1']:.4f}"
     )
 
     print(
-        f"Precision@5                   "
-        f"{baseline_summary['precision_at_5']:.4f}        "
+        f"{'Precision@5':35s}"
+        f"{baseline_summary['precision_at_5']:.4f}"
+        f"{'':8s}"
         f"{structure_summary['precision_at_5']:.4f}"
     )
 
     print(
-        f"Recall@1                      "
-        f"{baseline_summary['recall_at_1']:.4f}        "
+        f"{'Recall@1':35s}"
+        f"{baseline_summary['recall_at_1']:.4f}"
+        f"{'':8s}"
         f"{structure_summary['recall_at_1']:.4f}"
     )
 
     print(
-        f"Recall@5                      "
-        f"{baseline_summary['recall_at_5']:.4f}        "
+        f"{'Recall@5':35s}"
+        f"{baseline_summary['recall_at_5']:.4f}"
+        f"{'':8s}"
         f"{structure_summary['recall_at_5']:.4f}"
     )
 
     print(
-        f"Reasoning accuracy            "
-        f"{baseline_summary['reasoning_accuracy']:.4f}        "
+        "\nAnswer Evaluation Metrics"
+    )
+
+    print(
+        f"{'Metric':35s}"
+        f"{'Baseline':15s}"
+        f"{'Structure':15s}"
+    )
+
+    print("-" * 80)
+
+    print(
+        f"{'Answer Correctness (%)':35s}"
+        f"{baseline_summary['answer_correctness']:.2f}"
+        f"{'':8s}"
+        f"{structure_summary['answer_correctness']:.2f}"
+    )
+
+    print(
+        f"{'Groundedness (%)':35s}"
+        f"{baseline_summary['groundedness']:.2f}"
+        f"{'':8s}"
+        f"{structure_summary['groundedness']:.2f}"
+    )
+
+    print(
+        f"{'Completeness (%)':35s}"
+        f"{baseline_summary['completeness']:.2f}"
+        f"{'':8s}"
+        f"{structure_summary['completeness']:.2f}"
+    )
+
+    print(
+        f"{'Citation/Source Accuracy (%)':35s}"
+        f"{baseline_summary['citation_source_accuracy']:.2f}"
+        f"{'':8s}"
+        f"{structure_summary['citation_source_accuracy']:.2f}"
+    )
+
+    print(
+        "\nSupporting Metrics"
+    )
+
+    print(
+        f"{'Metric':35s}"
+        f"{'Baseline':15s}"
+        f"{'Structure':15s}"
+    )
+
+    print("-" * 80)
+
+    print(
+        f"{'Reasoning Accuracy':35s}"
+        f"{baseline_summary['reasoning_accuracy']:.4f}"
+        f"{'':8s}"
         f"{structure_summary['reasoning_accuracy']:.4f}"
     )
 
     print(
-        f"Hallucination rate            "
-        f"{baseline_summary['hallucination_rate']:.4f}        "
+        f"{'Hallucination Rate':35s}"
+        f"{baseline_summary['hallucination_rate']:.4f}"
+        f"{'':8s}"
         f"{structure_summary['hallucination_rate']:.4f}"
     )
 
-    print("\nDifference (Structure - Baseline)")
+    print(
+        "\nDifference (Structure - Baseline)"
+    )
+
     print("-" * 80)
 
     for metric, value in difference.items():
 
         print(
-            f"{metric:30s} "
+            f"{metric:35s}"
             f"{value:+.4f}"
         )
 
@@ -1908,3 +2160,4 @@ def run_experiment():
 
 if __name__ == "__main__":
     run_experiment()
+

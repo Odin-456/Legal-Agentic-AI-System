@@ -284,15 +284,35 @@ def parse_list_items(
 
             text = "[Repealed]"
 
-            hierarchy = (
-                "section > subsection > paragraph"
-            )
-
             if parent_paragraph:
-                hierarchy = (
-                    "section > subsection > "
-                    "paragraph > nested_paragraph"
-                )
+
+                if subsection:
+
+                    hierarchy = (
+                        "section > subsection > "
+                        "paragraph > nested_paragraph"
+                    )
+
+                else:
+
+                    hierarchy = (
+                        "section > paragraph > "
+                        "nested_paragraph"
+                    )
+
+            else:
+
+                if subsection:
+
+                    hierarchy = (
+                        "section > subsection > paragraph"
+                    )
+
+                else:
+
+                    hierarchy = (
+                        "section > paragraph"
+                    )
 
             document = create_document(
                 act=act,
@@ -370,16 +390,33 @@ def parse_list_items(
 
             if parent_paragraph:
 
-                hierarchy = (
-                    "section > subsection > "
-                    "paragraph > nested_paragraph"
-                )
+                if subsection:
+
+                    hierarchy = (
+                        "section > subsection > "
+                        "paragraph > nested_paragraph"
+                    )
+
+                else:
+
+                    hierarchy = (
+                        "section > paragraph > "
+                        "nested_paragraph"
+                    )
 
             else:
 
-                hierarchy = (
-                    "section > subsection > paragraph"
-                )
+                if subsection:
+
+                    hierarchy = (
+                        "section > subsection > paragraph"
+                    )
+
+                else:
+
+                    hierarchy = (
+                        "section > paragraph"
+                    )
 
             document = create_document(
                 act=act,
@@ -590,20 +627,79 @@ def parse_section(
         "./tier[@type='subclause']"
     )
 
-    for subsection in subsections:
+    if subsections:
 
-        subsection_documents = (
-            parse_subsection(
-                subsection,
-                act=act,
-                section=section,
-                heading=heading
+        for subsection in subsections:
+
+            subsection_documents = (
+                parse_subsection(
+                    subsection,
+                    act=act,
+                    section=section,
+                    heading=heading
+                )
             )
+
+            documents.extend(
+                subsection_documents
+            )
+
+    else:
+
+        # ----------------------------------------------------
+        # Handle text directly inside the section
+        # ----------------------------------------------------
+
+        block = level.find(
+            "./block"
         )
 
-        documents.extend(
-            subsection_documents
-        )
+        if block is not None:
+
+            direct_text = (
+                parse_block_direct_text(
+                    block
+                )
+            )
+
+            if direct_text:
+
+                document = create_document(
+                    act=act,
+                    section=section,
+                    heading=heading,
+                    text=direct_text,
+                    hierarchy="section"
+                )
+
+                if document:
+                    documents.append(
+                        document
+                    )
+
+            # ------------------------------------------------
+            # Handle lists directly inside the section
+            # ------------------------------------------------
+
+            lists = block.findall(
+                "./list"
+            )
+
+            for list_element in lists:
+
+                paragraph_documents = (
+                    parse_list_items(
+                        list_element,
+                        act=act,
+                        section=section,
+                        heading=heading,
+                        subsection=""
+                    )
+                )
+
+                documents.extend(
+                    paragraph_documents
+                )
 
     return documents
 
