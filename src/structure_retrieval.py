@@ -26,7 +26,7 @@ VECTORSTORE_DIR = (
 
 COLLECTION_NAME = "property_law_structure"
 
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 
 DEFAULT_TOP_K = 5
 CANDIDATE_K = 50
