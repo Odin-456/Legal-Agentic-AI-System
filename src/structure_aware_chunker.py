@@ -9,100 +9,51 @@ from langchain_core.documents import Document
 # CONFIGURATION
 # ============================================================
 
-XML_DIR = Path(
-    "data/raw/australian_property_law"
-)
-
-OUTPUT_DIR = Path(
-    "data/processed/structure_chunks"
-)
+XML_DIR = Path("data/raw/australian_property_law")
+OUTPUT_DIR = Path("data/processed/structure_chunks")
 
 
 # ============================================================
-# TEXT HELPERS
+# BASIC TEXT FUNCTIONS
 # ============================================================
 
 def clean_text(text):
-    """
-    Clean whitespace from extracted XML text.
-    """
-
     if not text:
         return ""
 
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    )
-
-    return text.strip()
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def get_text(element):
-    """
-    Extract all text from an XML element.
-    """
-
     if element is None:
         return ""
 
-    return clean_text(
-        "".join(element.itertext())
-    )
+    return clean_text("".join(element.itertext()))
 
 
 def get_number(element):
-    """
-    Extract numbering from an XML element.
-
-    Handles structures such as:
-
-        <no>(1)</no>
-        <head><no>(1)</no></head>
-        <no>(a)</no>
-        <no>(i)</no>
-    """
-
     if element is None:
         return ""
 
-    # Direct number
-    no = element.find("./no")
+    number = element.find("./no")
 
-    if no is not None:
-        return get_text(no)
+    if number is None:
+        number = element.find("./head/no")
 
-    # Number inside head
-    no = element.find("./head/no")
-
-    if no is not None:
-        return get_text(no)
+    if number is not None:
+        return get_text(number)
 
     return ""
 
 
-# ============================================================
-# XML TEXT EXTRACTION
-# ============================================================
-
-def parse_block_direct_text(block):
-    """
-    Extract only direct <txt> elements from a block.
-
-    Nested lists are deliberately excluded because they
-    are handled separately.
-    """
-
+def get_block_text(block):
     if block is None:
         return ""
 
     texts = []
 
     for child in block:
-
         if child.tag == "txt":
-
             text = get_text(child)
 
             if text:
@@ -116,31 +67,9 @@ def parse_block_direct_text(block):
 # ============================================================
 
 def get_section_number(level):
-    """
-    Extract section number from an XML level ID.
+    section_id = level.get("id", "")
 
-    Example:
-
-        sec.42
-        sec.45C
-        sec.100
-
-    becomes:
-
-        42
-        45C
-        100
-    """
-
-    section_id = level.get(
-        "id",
-        ""
-    )
-
-    match = re.match(
-        r"sec\.([^.]+)",
-        section_id
-    )
+    match = re.match(r"sec\.([^.]+)", section_id)
 
     if match:
         return match.group(1)
@@ -149,27 +78,16 @@ def get_section_number(level):
 
 
 def get_section_heading(level):
-    """
-    Extract the section heading.
-    """
+    heading = level.find("./head/heading")
 
-    head = level.find("./head")
+    if heading is not None:
+        return get_text(heading)
 
-    if head is None:
-        return ""
-
-    heading = head.find(
-        "./heading"
-    )
-
-    if heading is None:
-        return ""
-
-    return get_text(heading)
+    return ""
 
 
 # ============================================================
-# CREATE STRUCTURED DOCUMENT
+# CREATE DOCUMENT
 # ============================================================
 
 def create_document(
@@ -182,72 +100,49 @@ def create_document(
     nested_paragraph="",
     hierarchy=""
 ):
-    """
-    Create one LangChain Document containing both the
-    legal text and its structural metadata.
-    """
-
     if not text.strip():
         return None
-
-    # --------------------------------------------------------
-    # Build structural prefix
-    # --------------------------------------------------------
 
     parts = [
         f"Act: {act}",
         f"Section: {section}",
-        f"Heading: {heading}",
+        f"Heading: {heading}"
     ]
 
     if subsection:
-        parts.append(
-            f"Subsection: {subsection}"
-        )
+        parts.append(f"Subsection: {subsection}")
 
     if paragraph:
-        parts.append(
-            f"Paragraph: {paragraph}"
-        )
+        parts.append(f"Paragraph: {paragraph}")
 
     if nested_paragraph:
         parts.append(
             f"Nested paragraph: {nested_paragraph}"
         )
 
-    prefix = "\n".join(parts)
-
     page_content = (
-        prefix
+        "\n".join(parts)
         + "\n\n"
         + text
     )
 
-    # --------------------------------------------------------
-    # Metadata
-    # --------------------------------------------------------
-
-    metadata = {
-        "act": act,
-        "section": section,
-        "heading": heading,
-        "subsection": subsection,
-        "paragraph": paragraph,
-        "nested_paragraph": nested_paragraph,
-        "hierarchy": hierarchy,
-        "source_type": (
-            "NSW Property Law Legislation"
-        ),
-    }
-
     return Document(
         page_content=page_content,
-        metadata=metadata
+        metadata={
+            "act": act,
+            "section": section,
+            "heading": heading,
+            "subsection": subsection,
+            "paragraph": paragraph,
+            "nested_paragraph": nested_paragraph,
+            "hierarchy": hierarchy,
+            "source_type": "NSW Property Law Legislation",
+        }
     )
 
 
 # ============================================================
-# PARAGRAPH / LIST PARSING
+# PARSE PARAGRAPHS
 # ============================================================
 
 def parse_list_items(
@@ -258,371 +153,210 @@ def parse_list_items(
     subsection,
     parent_paragraph=""
 ):
-    """
-    Parse paragraph and nested paragraph structures.
-
-    Generic hierarchy:
-
-        subsection
-            paragraph
-                nested paragraph
-
-    The function does not assume specific numbering.
-    """
-
     documents = []
 
-    for li in list_element.findall("./li"):
+    for item in list_element.findall("./li"):
 
-        paragraph_number = get_number(li)
+        number = get_number(item)
 
-        # ----------------------------------------------------
-        # Repealed provision
-        # ----------------------------------------------------
+        # Handle repealed provisions
+        if item.get("status") == "repealed":
 
-        if li.get("status") == "repealed":
+            paragraph = (
+                parent_paragraph
+                if parent_paragraph
+                else number
+            )
 
-            text = "[Repealed]"
+            nested = number if parent_paragraph else ""
 
-            if parent_paragraph:
-
-                if subsection:
-
-                    hierarchy = (
-                        "section > subsection > "
-                        "paragraph > nested_paragraph"
-                    )
-
-                else:
-
-                    hierarchy = (
-                        "section > paragraph > "
-                        "nested_paragraph"
-                    )
-
-            else:
-
-                if subsection:
-
-                    hierarchy = (
-                        "section > subsection > paragraph"
-                    )
-
-                else:
-
-                    hierarchy = (
-                        "section > paragraph"
-                    )
+            hierarchy = (
+                "section > subsection > "
+                "paragraph > nested_paragraph"
+                if parent_paragraph and subsection
+                else "section > paragraph > "
+                "nested_paragraph"
+                if parent_paragraph
+                else "section > subsection > paragraph"
+                if subsection
+                else "section > paragraph"
+            )
 
             document = create_document(
-                act=act,
-                section=section,
-                heading=heading,
-                text=text,
-                subsection=subsection,
-                paragraph=(
-                    parent_paragraph
-                    if parent_paragraph
-                    else paragraph_number
-                ),
-                nested_paragraph=(
-                    paragraph_number
-                    if parent_paragraph
-                    else ""
-                ),
-                hierarchy=hierarchy
+                act,
+                section,
+                heading,
+                "[Repealed]",
+                subsection,
+                paragraph,
+                nested,
+                hierarchy
             )
 
             if document:
-                documents.append(
-                    document
-                )
+                documents.append(document)
 
             continue
 
-        # ----------------------------------------------------
-        # Determine whether this is a normal paragraph
-        # or a nested paragraph.
-        # ----------------------------------------------------
-
+        # Determine paragraph level
         if parent_paragraph:
-
             paragraph = parent_paragraph
-
-            nested_paragraph = (
-                paragraph_number
-            )
-
+            nested = number
         else:
+            paragraph = number
+            nested = ""
 
-            paragraph = paragraph_number
+        # Read only direct block text
+        texts = []
 
-            nested_paragraph = ""
-
-        # ----------------------------------------------------
-        # Extract direct block text
-        # ----------------------------------------------------
-
-        direct_texts = []
-
-        for block in li.findall(
-            "./block"
-        ):
-
-            text = parse_block_direct_text(
-                block
-            )
+        for block in item.findall("./block"):
+            text = get_block_text(block)
 
             if text:
-                direct_texts.append(
-                    text
-                )
+                texts.append(text)
 
-        text = " ".join(
-            direct_texts
-        ).strip()
-
-        # ----------------------------------------------------
-        # Create document for this paragraph
-        # ----------------------------------------------------
+        text = " ".join(texts).strip()
 
         if text:
 
-            if parent_paragraph:
-
-                if subsection:
-
-                    hierarchy = (
-                        "section > subsection > "
-                        "paragraph > nested_paragraph"
-                    )
-
-                else:
-
-                    hierarchy = (
-                        "section > paragraph > "
-                        "nested_paragraph"
-                    )
-
+            if parent_paragraph and subsection:
+                hierarchy = (
+                    "section > subsection > "
+                    "paragraph > nested_paragraph"
+                )
+            elif parent_paragraph:
+                hierarchy = (
+                    "section > paragraph > "
+                    "nested_paragraph"
+                )
+            elif subsection:
+                hierarchy = (
+                    "section > subsection > paragraph"
+                )
             else:
-
-                if subsection:
-
-                    hierarchy = (
-                        "section > subsection > paragraph"
-                    )
-
-                else:
-
-                    hierarchy = (
-                        "section > paragraph"
-                    )
+                hierarchy = "section > paragraph"
 
             document = create_document(
-                act=act,
-                section=section,
-                heading=heading,
-                text=text,
-                subsection=subsection,
-                paragraph=paragraph,
-                nested_paragraph=nested_paragraph,
-                hierarchy=hierarchy
+                act,
+                section,
+                heading,
+                text,
+                subsection,
+                paragraph,
+                nested,
+                hierarchy
             )
 
             if document:
-                documents.append(
-                    document
-                )
+                documents.append(document)
 
-        # ----------------------------------------------------
         # Find nested lists
-        # ----------------------------------------------------
-
         nested_lists = []
 
-        for block in li.findall(
-            "./block"
-        ):
-
+        for block in item.findall("./block"):
             nested_lists.extend(
                 block.findall("./list")
             )
 
         nested_lists.extend(
-            li.findall("./list")
+            item.findall("./list")
         )
 
-        # ----------------------------------------------------
-        # Recursively parse nested paragraphs
-        # ----------------------------------------------------
-
+        # Parse nested paragraphs
         for nested_list in nested_lists:
 
-            nested_documents = (
+            documents.extend(
                 parse_list_items(
                     nested_list,
-                    act=act,
-                    section=section,
-                    heading=heading,
-                    subsection=subsection,
-                    parent_paragraph=(
-                        paragraph
-                    )
+                    act,
+                    section,
+                    heading,
+                    subsection,
+                    paragraph
                 )
-            )
-
-            documents.extend(
-                nested_documents
             )
 
     return documents
 
 
 # ============================================================
-# SUBSECTION PARSING
+# PARSE SUBSECTION
 # ============================================================
 
 def parse_subsection(
-    tier,
+    subsection,
     act,
     section,
     heading
 ):
-    """
-    Parse one subsection.
-
-    Example:
-
-        (1) Some legal rule
-            (a) First condition
-            (b) Second condition
-                (i) Nested condition
-                (ii) Nested condition
-
-    Each legal unit becomes its own retrieval document.
-    """
-
     documents = []
 
-    subsection_number = get_number(
-        tier
-    )
+    subsection_number = get_number(subsection)
 
-    # --------------------------------------------------------
-    # Direct subsection text
-    # --------------------------------------------------------
+    # Subsection text
+    texts = []
 
-    direct_texts = []
-
-    for block in tier.findall(
-        "./block"
-    ):
-
-        text = parse_block_direct_text(
-            block
-        )
+    for block in subsection.findall("./block"):
+        text = get_block_text(block)
 
         if text:
-            direct_texts.append(
-                text
-            )
+            texts.append(text)
 
-    direct_text = " ".join(
-        direct_texts
-    ).strip()
+    text = " ".join(texts).strip()
 
-    # --------------------------------------------------------
-    # Create subsection-level document
-    # --------------------------------------------------------
-
-    if direct_text:
+    if text:
 
         document = create_document(
-            act=act,
-            section=section,
-            heading=heading,
-            text=direct_text,
+            act,
+            section,
+            heading,
+            text,
             subsection=subsection_number,
-            hierarchy=(
-                "section > subsection"
-            )
+            hierarchy="section > subsection"
         )
 
         if document:
-            documents.append(
-                document
-            )
+            documents.append(document)
 
-    # --------------------------------------------------------
-    # Find lists directly inside subsection blocks
-    # --------------------------------------------------------
-
+    # Paragraph lists
     lists = []
 
-    for block in tier.findall(
-        "./block"
-    ):
-
+    for block in subsection.findall("./block"):
         lists.extend(
             block.findall("./list")
         )
 
-    # --------------------------------------------------------
-    # Parse paragraphs
-    # --------------------------------------------------------
-
     for list_element in lists:
 
-        paragraph_documents = (
+        documents.extend(
             parse_list_items(
                 list_element,
-                act=act,
-                section=section,
-                heading=heading,
-                subsection=subsection_number
+                act,
+                section,
+                heading,
+                subsection_number
             )
-        )
-
-        documents.extend(
-            paragraph_documents
         )
 
     return documents
 
 
 # ============================================================
-# SECTION PARSING
+# PARSE SECTION
 # ============================================================
 
-def parse_section(
-    level,
-    act
-):
-    """
-    Parse one complete legislation section.
+def parse_section(level, act):
 
-    The section itself is not flattened into one document.
-
-    Instead, its legal hierarchy is preserved.
-    """
-
-    section = get_section_number(
-        level
-    )
+    section = get_section_number(level)
 
     if not section:
         return []
 
-    heading = get_section_heading(
-        level
-    )
+    heading = get_section_heading(level)
 
     documents = []
 
-    # --------------------------------------------------------
     # Find subsections
-    # --------------------------------------------------------
-
     subsections = level.findall(
         "./tier[@type='subclause']"
     )
@@ -631,268 +365,165 @@ def parse_section(
 
         for subsection in subsections:
 
-            subsection_documents = (
+            documents.extend(
                 parse_subsection(
                     subsection,
-                    act=act,
-                    section=section,
-                    heading=heading
+                    act,
+                    section,
+                    heading
                 )
-            )
-
-            documents.extend(
-                subsection_documents
             )
 
     else:
 
-        # ----------------------------------------------------
-        # Handle text directly inside the section
-        # ----------------------------------------------------
-
-        block = level.find(
-            "./block"
-        )
+        block = level.find("./block")
 
         if block is not None:
 
-            direct_text = (
-                parse_block_direct_text(
-                    block
-                )
-            )
+            text = get_block_text(block)
 
-            if direct_text:
+            if text:
 
                 document = create_document(
-                    act=act,
-                    section=section,
-                    heading=heading,
-                    text=direct_text,
+                    act,
+                    section,
+                    heading,
+                    text,
                     hierarchy="section"
                 )
 
                 if document:
-                    documents.append(
-                        document
-                    )
+                    documents.append(document)
 
-            # ------------------------------------------------
-            # Handle lists directly inside the section
-            # ------------------------------------------------
-
-            lists = block.findall(
-                "./list"
-            )
-
-            for list_element in lists:
-
-                paragraph_documents = (
-                    parse_list_items(
-                        list_element,
-                        act=act,
-                        section=section,
-                        heading=heading,
-                        subsection=""
-                    )
-                )
+            # Lists directly in the section
+            for list_element in block.findall("./list"):
 
                 documents.extend(
-                    paragraph_documents
+                    parse_list_items(
+                        list_element,
+                        act,
+                        section,
+                        heading,
+                        ""
+                    )
                 )
 
     return documents
 
 
 # ============================================================
-# ACT PARSING
+# PARSE ONE ACT
 # ============================================================
 
-def parse_act(
-    xml_file
-):
-    """
-    Parse one NSW property-law Act.
-    """
+def parse_act(xml_file):
 
-    print(
-        f"Parsing: {xml_file.name}"
-    )
+    print(f"Parsing: {xml_file.name}")
 
-    tree = ET.parse(
-        xml_file
-    )
+    root = ET.parse(xml_file).getroot()
 
-    root = tree.getroot()
-
-    # --------------------------------------------------------
-    # Act title
-    # --------------------------------------------------------
-
-    act_name = ""
-
-    title = root.find(
-        ".//title"
-    )
+    # Get the real Act title from the XML
+    title = root.find(".//title")
 
     if title is not None:
-        act_name = get_text(
-            title
-        )
-
-    if not act_name:
-
-        act_name = (
+        act = get_text(title)
+    else:
+        act = (
             xml_file.stem
             .replace("_", " ")
             .title()
         )
 
-    # --------------------------------------------------------
-    # Find sections
-    # --------------------------------------------------------
-
     documents = []
-
     section_count = 0
 
     for level in root.findall(
         ".//level[@type='clause']"
     ):
 
-        section_id = level.get(
-            "id",
-            ""
-        )
-
-        if not section_id.startswith(
-            "sec."
-        ):
+        if not level.get("id", "").startswith("sec."):
             continue
 
         section_count += 1
 
-        section_documents = (
-            parse_section(
-                level,
-                act_name
-            )
-        )
-
         documents.extend(
-            section_documents
+            parse_section(level, act)
         )
 
-    print(
-        f"  Sections found: "
-        f"{section_count}"
-    )
-
-    print(
-        f"  Structure chunks: "
-        f"{len(documents)}"
-    )
+    print(f"Sections found: {section_count}")
+    print(f"Structure chunks: {len(documents)}")
 
     return documents
 
 
 # ============================================================
-# CORPUS PARSING
+# PARSE ALL ACTS
 # ============================================================
 
 def parse_structure_corpus():
-    """
-    Parse all NSW property-law XML files.
-    """
 
-    all_documents = []
+    documents = []
 
     xml_files = sorted(
         XML_DIR.glob("*.xml")
     )
 
     if not xml_files:
-
         raise FileNotFoundError(
             f"No XML files found in {XML_DIR}"
         )
 
     for xml_file in xml_files:
 
-        documents = parse_act(
-            xml_file
+        documents.extend(
+            parse_act(xml_file)
         )
 
-        all_documents.extend(
-            documents
-        )
+    print(
+        f"Total structure chunks: {len(documents)}"
+    )
 
-    return all_documents
+    return documents
 
 
 # ============================================================
 # REMOVE DUPLICATES
 # ============================================================
 
-def remove_duplicates(
-    documents
-):
-    """
-    Remove exact duplicate structural documents.
-    """
+def remove_duplicates(documents):
 
     unique = []
-
     seen = set()
 
     for document in documents:
 
+        metadata = document.metadata
+
         key = (
-            document.metadata.get(
-                "act",
-                ""
-            ),
-            document.metadata.get(
-                "section",
-                ""
-            ),
-            document.metadata.get(
-                "subsection",
-                ""
-            ),
-            document.metadata.get(
-                "paragraph",
-                ""
-            ),
-            document.metadata.get(
-                "nested_paragraph",
-                ""
-            ),
+            metadata.get("act", ""),
+            metadata.get("section", ""),
+            metadata.get("subsection", ""),
+            metadata.get("paragraph", ""),
+            metadata.get("nested_paragraph", ""),
             document.page_content
         )
 
-        if key in seen:
-            continue
+        if key not in seen:
 
-        seen.add(key)
+            seen.add(key)
+            unique.append(document)
 
-        unique.append(
-            document
-        )
+    print(
+        f"Unique structure chunks: {len(unique)}"
+    )
 
     return unique
 
 
 # ============================================================
-# SAVE FOR INSPECTION
+# SAVE CHUNKS
 # ============================================================
 
-def save_chunks(
-    documents
-):
-    """
-    Save all structure-aware chunks to a text file.
-    """
+def save_chunks(documents):
 
     OUTPUT_DIR.mkdir(
         parents=True,
@@ -900,38 +531,37 @@ def save_chunks(
     )
 
     output_file = (
-        OUTPUT_DIR
-        / "structure_aware_chunks.txt"
+        OUTPUT_DIR / "structure_aware_chunks.txt"
     )
 
     with output_file.open(
         "w",
         encoding="utf-8"
-    ) as f:
+    ) as file:
 
-        for index, document in enumerate(
-            documents
+        for number, document in enumerate(
+            documents,
+            1
         ):
 
-            f.write(
-                f"DOCUMENT {index}\n"
+            file.write(
+                f"DOCUMENT {number}\n"
             )
 
-            f.write(
-                "=" * 80
-                + "\n"
+            file.write(
+                "=" * 80 + "\n"
             )
 
-            f.write(
+            file.write(
                 document.page_content
                 + "\n\n"
             )
 
-            f.write(
+            file.write(
                 "METADATA:\n"
             )
 
-            f.write(
+            file.write(
                 str(document.metadata)
                 + "\n\n"
             )
@@ -940,124 +570,19 @@ def save_chunks(
 
 
 # ============================================================
-# DISPLAY SECTION 42
-# ============================================================
-
-def show_section_42(
-    documents
-):
-    """
-    Display all structure-aware chunks belonging
-    to Section 42.
-
-    This is only a test helper.
-    The retrieval system itself does NOT depend
-    on Section 42.
-    """
-
-    print()
-    print(
-        "=" * 80
-    )
-
-    print(
-        "REAL PROPERTY ACT 1900 — SECTION 42"
-    )
-
-    print(
-        "=" * 80
-    )
-
-    found = False
-
-    for document in documents:
-
-        metadata = document.metadata
-
-        if (
-            metadata.get("act")
-            == "Real Property Act 1900"
-            and metadata.get("section")
-            == "42"
-        ):
-
-            found = True
-
-            print()
-            print(
-                document.page_content
-            )
-
-            print()
-            print(
-                "Metadata:"
-            )
-
-            print(
-                document.metadata
-            )
-
-            print(
-                "-" * 80
-            )
-
-    if not found:
-
-        print(
-            "Section 42 not found."
-        )
-
-
-# ============================================================
 # MAIN
 # ============================================================
 
 if __name__ == "__main__":
 
-    print()
-    print(
-        "=" * 80
-    )
-
-    print(
-        "STRUCTURE-AWARE PROPERTY LAW CHUNKING"
-    )
-
-    print(
-        "=" * 80
-    )
-
-    print()
-
-    documents = (
-        parse_structure_corpus()
-    )
+    documents = parse_structure_corpus()
 
     print()
     print(
-        "=" * 80
+        f"Structure chunks created: {len(documents)}"
     )
 
-    print(
-        f"Structure chunks created: "
-        f"{len(documents)}"
-    )
-
-    print(
-        "=" * 80
-    )
-
-    unique_documents = (
-        remove_duplicates(
-            documents
-        )
-    )
-
-    print()
-    print(
-        f"Unique structure chunks: "
-        f"{len(unique_documents)}"
-    )
+    unique_documents = remove_duplicates(documents)
 
     print(
         f"Duplicate chunks removed: "
@@ -1068,15 +593,6 @@ if __name__ == "__main__":
         unique_documents
     )
 
-    print()
     print(
         f"Saved to: {output_file}"
-    )
-
-    # --------------------------------------------------------
-    # Test Section 42
-    # --------------------------------------------------------
-
-    show_section_42(
-        unique_documents
     )

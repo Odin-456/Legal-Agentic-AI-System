@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-
 from langchain_chroma import Chroma
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
@@ -18,7 +17,6 @@ SRC_DIR = Path(__file__).resolve().parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-
 from structure_retrieval import StructureAwareRetriever
 
 
@@ -30,7 +28,7 @@ load_dotenv()
 
 
 # ============================================================
-# CONFIGURATION
+# SETTINGS
 # ============================================================
 
 QUESTIONS_FILE = Path(
@@ -53,8 +51,6 @@ STRUCTURE_CANDIDATES = 50
 
 REASONING_CORRECT_THRESHOLD = 4
 
-EVALUATOR_RETRIES = 1
-
 
 # ============================================================
 # MODELS
@@ -71,7 +67,7 @@ llm = ChatOpenAI(
 
 
 # ============================================================
-# BASELINE VECTOR STORE
+# BASELINE VECTORSTORE
 # ============================================================
 
 baseline_vectorstore = Chroma(
@@ -91,7 +87,7 @@ structure_retriever = StructureAwareRetriever(
 
 
 # ============================================================
-# NORMALISATION
+# NORMALISE ACT NAMES
 # ============================================================
 
 def normalize_act(act):
@@ -133,11 +129,12 @@ def normalize_act(act):
             "community land management act 2021",
     }
 
-    return aliases.get(
-        act,
-        act
-    )
+    return aliases.get(act, act)
 
+
+# ============================================================
+# NORMALISE SECTION NUMBERS
+# ============================================================
 
 def normalize_section(section):
 
@@ -193,9 +190,7 @@ def document_is_relevant(
     expected_section
 ):
 
-    metadata = get_metadata(
-        document
-    )
+    metadata = get_metadata(document)
 
     act = normalize_act(
         metadata.get("act")
@@ -206,13 +201,9 @@ def document_is_relevant(
     )
 
     return (
-        act == normalize_act(
-            expected_act
-        )
+        act == normalize_act(expected_act)
         and
-        section == normalize_section(
-            expected_section
-        )
+        section == normalize_section(expected_section)
     )
 
 
@@ -221,16 +212,11 @@ def document_is_relevant(
 # ============================================================
 
 def retrieve_baseline(question):
-    """
-    Standard semantic retrieval.
-    """
 
-    results = baseline_vectorstore.similarity_search(
+    return baseline_vectorstore.similarity_search(
         question,
         k=TOP_K
     )
-
-    return results
 
 
 # ============================================================
@@ -238,57 +224,43 @@ def retrieve_baseline(question):
 # ============================================================
 
 def retrieve_structure(question):
-    """
-    Uses the same structure-aware retrieval pipeline
-    as the prototype legal agent.
-    """
 
     results = structure_retriever.retrieve(
         question
     )
 
     documents = []
-
     context_documents = []
 
     for result in results:
 
-        document = result.get(
-            "document"
-        )
+        document = result.get("document")
 
         if document is not None:
-            documents.append(
-                document
-            )
+            documents.append(document)
 
         related_documents = result.get(
             "related_documents",
             []
         )
 
-        for related_document in related_documents:
+        for document in related_documents:
 
-            if related_document not in context_documents:
-                context_documents.append(
-                    related_document
-                )
+            if document not in context_documents:
+                context_documents.append(document)
 
-    return (
-        documents,
-        context_documents
-    )
+    return documents, context_documents
 
 
 # ============================================================
-# CONTEXT
+# BUILD CONTEXT
 # ============================================================
 
 def build_context(documents):
 
-    context_parts = []
+    context = []
 
-    for index, document in enumerate(
+    for number, document in enumerate(
         documents,
         start=1
     ):
@@ -331,9 +303,8 @@ def build_context(documents):
             document
         )
 
-        context_parts.append(
-            f"""
-[SOURCE {index}]
+        source = f"""
+[SOURCE {number}]
 Act: {act}
 Section: {section}
 Heading: {heading}
@@ -343,25 +314,17 @@ Nested paragraph: {nested_paragraph}
 
 {text}
 """
-        )
 
-    return "\n".join(
-        context_parts
-    )
+        context.append(source)
+
+    return "\n".join(context)
 
 
 # ============================================================
-# ANSWER GENERATION
+# GENERATE ANSWER
 # ============================================================
 
-def generate_answer(
-    question,
-    documents
-):
-    """
-    Generates an answer using ONLY the retrieved
-    legal context.
-    """
+def generate_answer(question, documents):
 
     context = build_context(
         documents
@@ -404,24 +367,23 @@ Provide a concise and accurate answer.
 
 
 # ============================================================
-# ROBUST JSON PARSER
+# EXTRACT JSON
 # ============================================================
 
-def extract_json_object(raw_text):
+def extract_json_object(text):
 
-    if not raw_text:
+    if not text:
         return None
 
-    text = raw_text.strip()
+    text = text.strip()
 
+    # Try normal JSON first
     try:
-        return json.loads(
-            text
-        )
-
+        return json.loads(text)
     except json.JSONDecodeError:
         pass
 
+    # Remove Markdown code fences
     text = re.sub(
         r"```(?:json)?",
         "",
@@ -435,16 +397,12 @@ def extract_json_object(raw_text):
     ).strip()
 
     try:
-        return json.loads(
-            text
-        )
-
+        return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    start = text.find(
-        "{"
-    )
+    # Find JSON inside the response
+    start = text.find("{")
 
     if start == -1:
         return None
@@ -453,12 +411,12 @@ def extract_json_object(raw_text):
     in_string = False
     escape = False
 
-    for index in range(
+    for i in range(
         start,
         len(text)
     ):
 
-        char = text[index]
+        char = text[i]
 
         if escape:
             escape = False
@@ -484,15 +442,10 @@ def extract_json_object(raw_text):
 
             if depth == 0:
 
-                candidate = text[
-                    start:index + 1
-                ]
-
                 try:
                     return json.loads(
-                        candidate
+                        text[start:i + 1]
                     )
-
                 except json.JSONDecodeError:
                     return None
 
@@ -540,85 +493,41 @@ TARGET SECTION RETRIEVED:
 Evaluate the generated answer against the ground-truth
 legal provision and the retrieved legal context.
 
-Evaluate the following four metrics using scores from
-0 to 100.
+Use scores from 0 to 100 for:
 
 1. ANSWER CORRECTNESS
-
 How correctly does the answer answer the legal question?
 
-100 = Fully correct.
-80-99 = Mostly correct with minor issues.
-60-79 = Partially correct with some important errors
-        or omissions.
-40-59 = Significant errors or omissions.
-1-39 = Mostly incorrect.
-0 = Completely incorrect or does not answer the question.
-
 2. GROUNDEDNESS
-
 How well are the answer's claims supported by the
 retrieved legal context?
 
-100 = All substantive claims are supported.
-80-99 = Almost all claims are supported.
-60-79 = Some important claims are unsupported.
-40-59 = Many claims are unsupported.
-1-39 = Most claims are unsupported.
-0 = The answer is not grounded in the retrieved context.
-
 3. COMPLETENESS
-
 How completely does the answer provide the important
 information required to answer the question?
 
-100 = All important information is included.
-80-99 = Almost all important information is included.
-60-79 = Main answer is provided but some important
-        information is missing.
-40-59 = Substantial information is missing.
-1-39 = Very little required information is provided.
-0 = Required information is not provided.
-
 4. CITATION/SOURCE ACCURACY
-
 How accurately does the answer identify the relevant
 legal source?
 
-100 = Correct Act and section, and correct subsection
-      when applicable.
-80-99 = Mostly correct with a minor issue.
-60-79 = Partly correct but with an important omission.
-40-59 = Significant source errors.
-1-39 = Mostly incorrect.
-0 = Incorrect source or required source is not identified.
-
-The evaluation dataset provides expected Act and section
-information. Subsection-level ground truth is not available
-for every question, so only evaluate subsection accuracy
-when it can be determined from the supplied information.
-
-Also evaluate:
+Also give:
 
 REASONING SCORE:
-
-5 = Completely correct and directly answers the question.
-4 = Mostly correct with only minor omissions.
-3 = Partially correct but missing important information.
-2 = Mostly incorrect or materially incomplete.
-1 = Incorrect or does not answer the question.
+5 = Completely correct
+4 = Mostly correct
+3 = Partially correct
+2 = Mostly incorrect
+1 = Incorrect
 
 A claim is unsupported if it cannot be supported by the
 retrieved legal context.
 
-A refusal such as "the context is insufficient" is not a
-correct answer when the ground-truth provision contains
-enough information to answer the question.
-
 If the target section was not retrieved,
 reasoning_correct MUST be false.
 
-Return ONLY this JSON object:
+Do not use outside legal knowledge.
+
+Return ONLY this JSON:
 
 {{
     "answer_correctness": 0,
@@ -636,7 +545,7 @@ Return ONLY this JSON object:
 
 
 # ============================================================
-# ANSWER EVALUATION
+# EVALUATE ANSWER
 # ============================================================
 
 def evaluate_answer(
@@ -648,15 +557,20 @@ def evaluate_answer(
     ground_truth_document
 ):
 
-    target_retrieved = any(
-        document_is_relevant(
+    # Check whether the target section was retrieved
+    target_retrieved = False
+
+    for document in retrieved_documents:
+
+        if document_is_relevant(
             document,
             expected_act,
             expected_section
-        )
-        for document in retrieved_documents
-    )
+        ):
+            target_retrieved = True
+            break
 
+    # Ground truth text
     ground_truth = ""
 
     if ground_truth_document is not None:
@@ -679,12 +593,6 @@ def evaluate_answer(
         target_retrieved
     )
 
-    evaluator_parse_failed = False
-    evaluator_retry_used = False
-
-    evaluation = None
-    raw_response = ""
-
     response = llm.invoke(
         prompt
     )
@@ -695,16 +603,15 @@ def evaluate_answer(
         raw_response
     )
 
-    # --------------------------------------------------------
-    # Retry if parsing failed
-    # --------------------------------------------------------
+    retry_used = False
 
+    # Retry once if JSON parsing failed
     if evaluation is None:
 
-        evaluator_retry_used = True
+        retry_used = True
 
         retry_prompt = f"""
-Evaluate this legal QA result and return ONLY valid JSON.
+Evaluate the following legal QA result.
 
 QUESTION:
 {question}
@@ -727,25 +634,7 @@ GENERATED ANSWER:
 TARGET SECTION RETRIEVED:
 {target_retrieved}
 
-Give four scores from 0 to 100:
-
-answer_correctness:
-How correctly the answer answers the question.
-
-groundedness:
-How well the answer is supported by the retrieved legal context.
-
-completeness:
-How completely the answer contains the important information
-required by the question.
-
-citation_source_accuracy:
-How accurately the answer identifies the correct Act and section,
-and subsection when applicable.
-
-Also give reasoning_score from 1 to 5.
-
-Return exactly:
+Return ONLY valid JSON:
 
 {{
     "answer_correctness": 0,
@@ -764,242 +653,169 @@ If the target section was not retrieved,
 reasoning_correct MUST be false.
 """
 
-        retry_response = llm.invoke(
+        response = llm.invoke(
             retry_prompt
         )
 
-        retry_raw = (
-            retry_response.content.strip()
+        raw_response = (
+            response.content.strip()
         )
 
-        retry_evaluation = extract_json_object(
-            retry_raw
+        evaluation = extract_json_object(
+            raw_response
         )
 
-        if retry_evaluation is not None:
+    # If parsing failed twice
+    if evaluation is None:
 
-            evaluation = retry_evaluation
-            raw_response = retry_raw
+        return {
+            "answer_correctness": None,
+            "groundedness": None,
+            "completeness": None,
+            "citation_source_accuracy": None,
+            "reasoning_score": None,
+            "answers_question": None,
+            "reasoning_correct": None,
+            "total_claims": None,
+            "unsupported_claims": None,
+            "hallucination_rate": None,
+            "target_section_retrieved":
+                target_retrieved,
+            "evaluator_parse_failed": True,
+            "evaluator_retry_used":
+                retry_used,
+            "explanation":
+                "Evaluator response could not be parsed.",
+            "raw_evaluator_response":
+                raw_response
+        }
 
-        else:
-
-            evaluator_parse_failed = True
-            raw_response = retry_raw
-
-    # --------------------------------------------------------
-    # Successful evaluation
-    # --------------------------------------------------------
-
-    if evaluation is not None:
-
-        try:
-            answer_correctness = int(
-                evaluation.get(
-                    "answer_correctness",
-                    0
-                )
-            )
-        except (
-            TypeError,
-            ValueError
-        ):
-            answer_correctness = 0
-
-        try:
-            groundedness = int(
-                evaluation.get(
-                    "groundedness",
-                    0
-                )
-            )
-        except (
-            TypeError,
-            ValueError
-        ):
-            groundedness = 0
-
-        try:
-            completeness = int(
-                evaluation.get(
-                    "completeness",
-                    0
-                )
-            )
-        except (
-            TypeError,
-            ValueError
-        ):
-            completeness = 0
-
-        try:
-            citation_source_accuracy = int(
-                evaluation.get(
-                    "citation_source_accuracy",
-                    0
-                )
-            )
-        except (
-            TypeError,
-            ValueError
-        ):
-            citation_source_accuracy = 0
-
-        try:
-            reasoning_score = int(
-                evaluation.get(
-                    "reasoning_score",
-                    1
-                )
-            )
-        except (
-            TypeError,
-            ValueError
-        ):
-            reasoning_score = 1
-
-        answers_question = bool(
-            evaluation.get(
-                "answers_question",
-                False
-            )
+    # Read evaluator results
+    answer_correctness = int(
+        evaluation.get(
+            "answer_correctness",
+            0
         )
+    )
 
-        reasoning_correct = bool(
-            evaluation.get(
-                "reasoning_correct",
-                False
-            )
+    groundedness = int(
+        evaluation.get(
+            "groundedness",
+            0
         )
+    )
 
-        try:
-            total_claims = int(
-                evaluation.get(
-                    "total_claims",
-                    0
-                )
-            )
-        except (
-            TypeError,
-            ValueError
-        ):
-            total_claims = 0
-
-        try:
-            unsupported_claims = int(
-                evaluation.get(
-                    "unsupported_claims",
-                    0
-                )
-            )
-        except (
-            TypeError,
-            ValueError
-        ):
-            unsupported_claims = 0
-
-        explanation = str(
-            evaluation.get(
-                "explanation",
-                ""
-            )
+    completeness = int(
+        evaluation.get(
+            "completeness",
+            0
         )
+    )
 
-        answer_correctness = max(
-            0,
-            min(
-                100,
-                answer_correctness
-            )
+    citation_source_accuracy = int(
+        evaluation.get(
+            "citation_source_accuracy",
+            0
         )
+    )
 
-        groundedness = max(
-            0,
-            min(
-                100,
-                groundedness
-            )
+    reasoning_score = int(
+        evaluation.get(
+            "reasoning_score",
+            1
         )
+    )
 
-        completeness = max(
-            0,
-            min(
-                100,
-                completeness
-            )
+    answers_question = bool(
+        evaluation.get(
+            "answers_question",
+            False
         )
+    )
 
-        citation_source_accuracy = max(
-            0,
-            min(
-                100,
-                citation_source_accuracy
-            )
+    reasoning_correct = bool(
+        evaluation.get(
+            "reasoning_correct",
+            False
         )
+    )
 
-        reasoning_score = max(
-            1,
-            min(
-                5,
-                reasoning_score
-            )
+    total_claims = int(
+        evaluation.get(
+            "total_claims",
+            0
         )
+    )
 
-        total_claims = max(
-            0,
+    unsupported_claims = int(
+        evaluation.get(
+            "unsupported_claims",
+            0
+        )
+    )
+
+    explanation = evaluation.get(
+        "explanation",
+        ""
+    )
+
+    # Keep scores within valid ranges
+    answer_correctness = max(
+        0,
+        min(100, answer_correctness)
+    )
+
+    groundedness = max(
+        0,
+        min(100, groundedness)
+    )
+
+    completeness = max(
+        0,
+        min(100, completeness)
+    )
+
+    citation_source_accuracy = max(
+        0,
+        min(100, citation_source_accuracy)
+    )
+
+    reasoning_score = max(
+        1,
+        min(5, reasoning_score)
+    )
+
+    total_claims = max(
+        0,
+        total_claims
+    )
+
+    unsupported_claims = max(
+        0,
+        min(
+            unsupported_claims,
             total_claims
         )
+    )
 
-        unsupported_claims = max(
-            0,
-            min(
-                unsupported_claims,
-                total_claims
-            )
-        )
+    # ========================================================
+    # OBJECTIVE REASONING CORRECTION
+    # ========================================================
 
-    else:
+    if reasoning_score < REASONING_CORRECT_THRESHOLD:
+        reasoning_correct = False
 
-        answer_correctness = None
-        groundedness = None
-        completeness = None
-        citation_source_accuracy = None
+    if not answers_question:
+        reasoning_correct = False
 
-        reasoning_score = None
-        answers_question = None
-        reasoning_correct = None
+    if not target_retrieved:
+        reasoning_correct = False
 
-        total_claims = None
-        unsupported_claims = None
+    # ========================================================
+    # HALLUCINATION RATE
+    # ========================================================
 
-        explanation = (
-            "Evaluator response could not be parsed "
-            "after retry."
-        )
-
-    # --------------------------------------------------------
-    # Objective reasoning correction
-    # --------------------------------------------------------
-
-    if not evaluator_parse_failed:
-
-        if reasoning_score < REASONING_CORRECT_THRESHOLD:
-            reasoning_correct = False
-
-        if not answers_question:
-            reasoning_correct = False
-
-        if not target_retrieved:
-            reasoning_correct = False
-
-    # --------------------------------------------------------
-    # Hallucination rate
-    # --------------------------------------------------------
-
-    if (
-        not evaluator_parse_failed
-        and total_claims is not None
-        and total_claims > 0
-    ):
+    if total_claims > 0:
 
         hallucination_rate = (
             unsupported_claims
@@ -1046,65 +862,40 @@ reasoning_correct MUST be false.
             target_retrieved,
 
         "evaluator_parse_failed":
-            evaluator_parse_failed,
+            False,
 
         "evaluator_retry_used":
-            evaluator_retry_used,
+            retry_used,
 
         "explanation":
             explanation,
 
         "raw_evaluator_response":
-            raw_response,
+            raw_response
     }
 
 
 # ============================================================
-# GROUND TRUTH
+# BUILD GROUND TRUTH
 # ============================================================
 
 def build_ground_truth_lookup():
 
-    collection_data = (
-        baseline_vectorstore.get(
-            include=[
-                "documents",
-                "metadatas"
-            ]
-        )
+    data = baseline_vectorstore.get(
+        include=[
+            "documents",
+            "metadatas"
+        ]
     )
-
-    documents = []
-
-    raw_documents = collection_data.get(
-        "documents",
-        []
-    )
-
-    raw_metadatas = collection_data.get(
-        "metadatas",
-        []
-    )
-
-    for text, metadata in zip(
-        raw_documents,
-        raw_metadatas
-    ):
-
-        documents.append(
-            {
-                "page_content": text,
-                "metadata": metadata or {}
-            }
-        )
 
     lookup = {}
 
-    for document in documents:
+    for text, metadata in zip(
+        data["documents"],
+        data["metadatas"]
+    ):
 
-        metadata = get_metadata(
-            document
-        )
+        metadata = metadata or {}
 
         act = normalize_act(
             metadata.get("act")
@@ -1123,13 +914,17 @@ def build_ground_truth_lookup():
         )
 
         if key not in lookup:
-            lookup[key] = document
+
+            lookup[key] = {
+                "page_content": text,
+                "metadata": metadata
+            }
 
     return lookup
 
 
 # ============================================================
-# METRICS
+# RETRIEVAL METRICS
 # ============================================================
 
 def precision_at_k(
@@ -1139,23 +934,24 @@ def precision_at_k(
     k
 ):
 
-    top_documents = documents[:k]
+    documents = documents[:k]
 
-    if not top_documents:
+    if not documents:
         return 0.0
 
-    relevant = sum(
-        1
-        for document in top_documents
+    relevant = 0
+
+    for document in documents:
+
         if document_is_relevant(
             document,
             expected_act,
             expected_section
-        )
-    )
+        ):
+            relevant += 1
 
     return relevant / len(
-        top_documents
+        documents
     )
 
 
@@ -1166,9 +962,9 @@ def recall_at_k(
     k
 ):
 
-    top_documents = documents[:k]
+    documents = documents[:k]
 
-    for document in top_documents:
+    for document in documents:
 
         if document_is_relevant(
             document,
@@ -1180,50 +976,50 @@ def recall_at_k(
     return 0.0
 
 
+# ============================================================
+# AVERAGE
+# ============================================================
+
 def average(values):
 
-    valid_values = [
+    values = [
         value
         for value in values
         if value is not None
     ]
 
-    if not valid_values:
+    if not values:
         return 0.0
 
-    return sum(
-        valid_values
-    ) / len(
-        valid_values
-    )
+    return sum(values) / len(values)
 
 
 # ============================================================
-# MAIN EXPERIMENT
+# RUN EXPERIMENT
 # ============================================================
 
 def run_experiment():
+
+    # --------------------------------------------------------
+    # Load questions
+    # --------------------------------------------------------
 
     with open(
         QUESTIONS_FILE,
         "r",
         encoding="utf-8"
-    ) as f:
+    ) as file:
 
-        dataset = json.load(
-            f
-        )
+        dataset = json.load(file)
 
-    questions = dataset[
-        "questions"
-    ]
+    questions = dataset["questions"]
 
     print("=" * 80)
-    print("FINAL EXPERIMENT EVALUATION")
+    print("FINAL EXPERIMENT: BASELINE VS STRUCTURE-AWARE RAG")
     print("=" * 80)
 
     print(
-        f"\nQuestions: {len(questions)}"
+        f"Questions: {len(questions)}"
     )
 
     print(
@@ -1235,17 +1031,17 @@ def run_experiment():
     )
 
     print(
-        "\nStructure-aware retrieval:"
+        f"Structure candidates: "
+        f"{STRUCTURE_CANDIDATES}"
     )
 
     print(
-        f"  Top sections: {TOP_K}"
+        f"Top K: {TOP_K}"
     )
 
-    print(
-        f"  Candidate chunks: "
-        f"{structure_retriever.candidate_k}"
-    )
+    # --------------------------------------------------------
+    # Ground truth
+    # --------------------------------------------------------
 
     print(
         "\nBuilding ground-truth lookup..."
@@ -1260,16 +1056,19 @@ def run_experiment():
         f"{len(ground_truth_lookup)}"
     )
 
+    # --------------------------------------------------------
+    # Metric lists
+    # --------------------------------------------------------
+
     baseline_p1 = []
     baseline_p5 = []
     baseline_r1 = []
     baseline_r5 = []
 
-    baseline_answer_correctness = []
+    baseline_correctness = []
     baseline_groundedness = []
     baseline_completeness = []
-    baseline_citation_source_accuracy = []
-
+    baseline_citation = []
     baseline_reasoning = []
     baseline_hallucination = []
 
@@ -1278,58 +1077,48 @@ def run_experiment():
     structure_r1 = []
     structure_r5 = []
 
-    structure_answer_correctness = []
+    structure_correctness = []
     structure_groundedness = []
     structure_completeness = []
-    structure_citation_source_accuracy = []
-
+    structure_citation = []
     structure_reasoning = []
     structure_hallucination = []
 
     results = []
 
-    baseline_evaluator_failures = 0
-    structure_evaluator_failures = 0
+    baseline_failures = 0
+    structure_failures = 0
 
-    for index, item in enumerate(
+    # ========================================================
+    # PROCESS QUESTIONS
+    # ========================================================
+
+    for number, item in enumerate(
         questions,
         start=1
     ):
 
-        question_id = item[
-            "id"
-        ]
-
-        question = item[
-            "question"
-        ]
-
-        expected_act = item[
-            "act"
-        ]
-
-        expected_section = item[
-            "section"
-        ]
+        question_id = item["id"]
+        question = item["question"]
+        expected_act = item["act"]
+        expected_section = item["section"]
 
         print(
-            f"\n[{index}/{len(questions)}] "
+            f"\n[{number}/{len(questions)}] "
             f"Q{question_id}: {question}"
         )
 
-        ground_truth_key = (
-            normalize_act(
-                expected_act
-            ),
-            normalize_section(
-                expected_section
-            )
+        # ----------------------------------------------------
+        # Ground truth document
+        # ----------------------------------------------------
+
+        key = (
+            normalize_act(expected_act),
+            normalize_section(expected_section)
         )
 
         ground_truth_document = (
-            ground_truth_lookup.get(
-                ground_truth_key
-            )
+            ground_truth_lookup.get(key)
         )
 
         # ====================================================
@@ -1337,45 +1126,35 @@ def run_experiment():
         # ====================================================
 
         baseline_documents = (
-            retrieve_baseline(
-                question
-            )
+            retrieve_baseline(question)
         )
 
-        baseline_p1_value = (
-            precision_at_k(
-                baseline_documents,
-                expected_act,
-                expected_section,
-                1
-            )
+        baseline_p1_value = precision_at_k(
+            baseline_documents,
+            expected_act,
+            expected_section,
+            1
         )
 
-        baseline_p5_value = (
-            precision_at_k(
-                baseline_documents,
-                expected_act,
-                expected_section,
-                5
-            )
+        baseline_p5_value = precision_at_k(
+            baseline_documents,
+            expected_act,
+            expected_section,
+            5
         )
 
-        baseline_r1_value = (
-            recall_at_k(
-                baseline_documents,
-                expected_act,
-                expected_section,
-                1
-            )
+        baseline_r1_value = recall_at_k(
+            baseline_documents,
+            expected_act,
+            expected_section,
+            1
         )
 
-        baseline_r5_value = (
-            recall_at_k(
-                baseline_documents,
-                expected_act,
-                expected_section,
-                5
-            )
+        baseline_r5_value = recall_at_k(
+            baseline_documents,
+            expected_act,
+            expected_section,
+            5
         )
 
         print(
@@ -1383,26 +1162,22 @@ def run_experiment():
             f"R@5={baseline_r5_value:.0f}"
         )
 
-        baseline_answer = (
-            generate_answer(
-                question,
-                baseline_documents
-            )
+        baseline_answer = generate_answer(
+            question,
+            baseline_documents
         )
 
-        baseline_evaluation = (
-            evaluate_answer(
-                question,
-                expected_act,
-                expected_section,
-                baseline_answer,
-                baseline_documents,
-                ground_truth_document
-            )
+        baseline_evaluation = evaluate_answer(
+            question,
+            expected_act,
+            expected_section,
+            baseline_answer,
+            baseline_documents,
+            ground_truth_document
         )
 
         print(
-            f"  Baseline answer correctness: "
+            f"  Baseline correctness: "
             f"{baseline_evaluation['answer_correctness']}"
         )
 
@@ -1425,12 +1200,7 @@ def run_experiment():
             "evaluator_parse_failed"
         ]:
 
-            baseline_evaluator_failures += 1
-
-            print(
-                "  WARNING: baseline evaluator "
-                "parse failed after retry."
-            )
+            baseline_failures += 1
 
         # ====================================================
         # STRUCTURE-AWARE
@@ -1438,45 +1208,35 @@ def run_experiment():
 
         (
             structure_documents,
-            structure_context_documents
-        ) = retrieve_structure(
-            question
+            structure_context
+        ) = retrieve_structure(question)
+
+        structure_p1_value = precision_at_k(
+            structure_documents,
+            expected_act,
+            expected_section,
+            1
         )
 
-        structure_p1_value = (
-            precision_at_k(
-                structure_documents,
-                expected_act,
-                expected_section,
-                1
-            )
+        structure_p5_value = precision_at_k(
+            structure_documents,
+            expected_act,
+            expected_section,
+            5
         )
 
-        structure_p5_value = (
-            precision_at_k(
-                structure_documents,
-                expected_act,
-                expected_section,
-                5
-            )
+        structure_r1_value = recall_at_k(
+            structure_documents,
+            expected_act,
+            expected_section,
+            1
         )
 
-        structure_r1_value = (
-            recall_at_k(
-                structure_documents,
-                expected_act,
-                expected_section,
-                1
-            )
-        )
-
-        structure_r5_value = (
-            recall_at_k(
-                structure_documents,
-                expected_act,
-                expected_section,
-                5
-            )
+        structure_r5_value = recall_at_k(
+            structure_documents,
+            expected_act,
+            expected_section,
+            5
         )
 
         print(
@@ -1484,26 +1244,22 @@ def run_experiment():
             f"R@5={structure_r5_value:.0f}"
         )
 
-        structure_answer = (
-            generate_answer(
-                question,
-                structure_context_documents
-            )
+        structure_answer = generate_answer(
+            question,
+            structure_context
         )
 
-        structure_evaluation = (
-            evaluate_answer(
-                question,
-                expected_act,
-                expected_section,
-                structure_answer,
-                structure_context_documents,
-                ground_truth_document
-            )
+        structure_evaluation = evaluate_answer(
+            question,
+            expected_act,
+            expected_section,
+            structure_answer,
+            structure_context,
+            ground_truth_document
         )
 
         print(
-            f"  Structure answer correctness: "
+            f"  Structure correctness: "
             f"{structure_evaluation['answer_correctness']}"
         )
 
@@ -1526,12 +1282,11 @@ def run_experiment():
             "evaluator_parse_failed"
         ]:
 
-            structure_evaluator_failures += 1
+            structure_failures += 1
 
-            print(
-                "  WARNING: structure evaluator "
-                "parse failed after retry."
-            )
+        # ----------------------------------------------------
+        # Save retrieval metrics
+        # ----------------------------------------------------
 
         baseline_p1.append(
             baseline_p1_value
@@ -1549,11 +1304,31 @@ def run_experiment():
             baseline_r5_value
         )
 
+        structure_p1.append(
+            structure_p1_value
+        )
+
+        structure_p5.append(
+            structure_p5_value
+        )
+
+        structure_r1.append(
+            structure_r1_value
+        )
+
+        structure_r5.append(
+            structure_r5_value
+        )
+
+        # ----------------------------------------------------
+        # Save baseline answer metrics
+        # ----------------------------------------------------
+
         if baseline_evaluation[
             "answer_correctness"
         ] is not None:
 
-            baseline_answer_correctness.append(
+            baseline_correctness.append(
                 baseline_evaluation[
                     "answer_correctness"
                 ]
@@ -1583,7 +1358,7 @@ def run_experiment():
             "citation_source_accuracy"
         ] is not None:
 
-            baseline_citation_source_accuracy.append(
+            baseline_citation.append(
                 baseline_evaluation[
                     "citation_source_accuracy"
                 ]
@@ -1611,27 +1386,15 @@ def run_experiment():
                 ]
             )
 
-        structure_p1.append(
-            structure_p1_value
-        )
-
-        structure_p5.append(
-            structure_p5_value
-        )
-
-        structure_r1.append(
-            structure_r1_value
-        )
-
-        structure_r5.append(
-            structure_r5_value
-        )
+        # ----------------------------------------------------
+        # Save structure answer metrics
+        # ----------------------------------------------------
 
         if structure_evaluation[
             "answer_correctness"
         ] is not None:
 
-            structure_answer_correctness.append(
+            structure_correctness.append(
                 structure_evaluation[
                     "answer_correctness"
                 ]
@@ -1661,7 +1424,7 @@ def run_experiment():
             "citation_source_accuracy"
         ] is not None:
 
-            structure_citation_source_accuracy.append(
+            structure_citation.append(
                 structure_evaluation[
                     "citation_source_accuracy"
                 ]
@@ -1689,194 +1452,151 @@ def run_experiment():
                 ]
             )
 
+        # ====================================================
+        # SAVE QUESTION RESULT
+        # ====================================================
+
         results.append(
             {
-                "question_number":
-                    question_id,
+                "question_number": question_id,
+                "question": question,
+                "expected_act": expected_act,
+                "expected_section": expected_section,
 
-                "question":
-                    question,
+                "baseline": {
+                    "retrieval": {
+                        "precision_at_1":
+                            baseline_p1_value,
 
-                "expected_act":
-                    expected_act,
+                        "precision_at_5":
+                            baseline_p5_value,
 
-                "expected_section":
-                    expected_section,
+                        "recall_at_1":
+                            baseline_r1_value,
 
-                "baseline":
-                    {
-                        "retrieval":
-                            {
-                                "precision_at_1":
-                                    baseline_p1_value,
+                        "recall_at_5":
+                            baseline_r5_value,
 
-                                "precision_at_5":
-                                    baseline_p5_value,
-
-                                "recall_at_1":
-                                    baseline_r1_value,
-
-                                "recall_at_5":
-                                    baseline_r5_value,
-
-                                "hit_at_5":
-                                    baseline_r5_value
-                                    == 1.0,
-                            },
-
-                        "answer":
-                            baseline_answer,
-
-                        "qa_evaluation":
-                            baseline_evaluation,
+                        "hit_at_5":
+                            baseline_r5_value == 1.0,
                     },
 
-                "structure_aware":
-                    {
-                        "retrieval":
-                            {
-                                "precision_at_1":
-                                    structure_p1_value,
+                    "answer":
+                        baseline_answer,
 
-                                "precision_at_5":
-                                    structure_p5_value,
+                    "qa_evaluation":
+                        baseline_evaluation,
+                },
 
-                                "recall_at_1":
-                                    structure_r1_value,
+                "structure_aware": {
+                    "retrieval": {
+                        "precision_at_1":
+                            structure_p1_value,
 
-                                "recall_at_5":
-                                    structure_r5_value,
+                        "precision_at_5":
+                            structure_p5_value,
 
-                                "hit_at_5":
-                                    structure_r5_value
-                                    == 1.0,
-                            },
+                        "recall_at_1":
+                            structure_r1_value,
 
-                        "answer":
-                            structure_answer,
+                        "recall_at_5":
+                            structure_r5_value,
 
-                        "qa_evaluation":
-                            structure_evaluation,
+                        "hit_at_5":
+                            structure_r5_value == 1.0,
                     },
+
+                    "answer":
+                        structure_answer,
+
+                    "qa_evaluation":
+                        structure_evaluation,
+                },
             }
         )
 
     # ========================================================
-    # FINAL SUMMARY
+    # SUMMARIES
     # ========================================================
 
     baseline_summary = {
         "precision_at_1":
-            average(
-                baseline_p1
-            ),
+            average(baseline_p1),
 
         "precision_at_5":
-            average(
-                baseline_p5
-            ),
+            average(baseline_p5),
 
         "recall_at_1":
-            average(
-                baseline_r1
-            ),
+            average(baseline_r1),
 
         "recall_at_5":
-            average(
-                baseline_r5
-            ),
+            average(baseline_r5),
 
         "answer_correctness":
-            average(
-                baseline_answer_correctness
-            ),
+            average(baseline_correctness),
 
         "groundedness":
-            average(
-                baseline_groundedness
-            ),
+            average(baseline_groundedness),
 
         "completeness":
-            average(
-                baseline_completeness
-            ),
+            average(baseline_completeness),
 
         "citation_source_accuracy":
-            average(
-                baseline_citation_source_accuracy
-            ),
+            average(baseline_citation),
 
         "reasoning_accuracy":
-            average(
-                baseline_reasoning
-            ),
+            average(baseline_reasoning),
 
         "hallucination_rate":
-            average(
-                baseline_hallucination
-            ),
+            average(baseline_hallucination),
     }
 
     structure_summary = {
         "precision_at_1":
-            average(
-                structure_p1
-            ),
+            average(structure_p1),
 
         "precision_at_5":
-            average(
-                structure_p5
-            ),
+            average(structure_p5),
 
         "recall_at_1":
-            average(
-                structure_r1
-            ),
+            average(structure_r1),
 
         "recall_at_5":
-            average(
-                structure_r5
-            ),
+            average(structure_r5),
 
         "answer_correctness":
-            average(
-                structure_answer_correctness
-            ),
+            average(structure_correctness),
 
         "groundedness":
-            average(
-                structure_groundedness
-            ),
+            average(structure_groundedness),
 
         "completeness":
-            average(
-                structure_completeness
-            ),
+            average(structure_completeness),
 
         "citation_source_accuracy":
-            average(
-                structure_citation_source_accuracy
-            ),
+            average(structure_citation),
 
         "reasoning_accuracy":
-            average(
-                structure_reasoning
-            ),
+            average(structure_reasoning),
 
         "hallucination_rate":
-            average(
-                structure_hallucination
-            ),
+            average(structure_hallucination),
     }
 
-    difference = {
-        metric:
+    # Calculate Structure - Baseline
+    difference = {}
+
+    for metric in baseline_summary:
+
+        difference[metric] = (
             structure_summary[metric]
             -
             baseline_summary[metric]
+        )
 
-        for metric in baseline_summary
-    }
+    # ========================================================
+    # FINAL RESULTS
+    # ========================================================
 
     final_results = {
         "experiment":
@@ -1896,17 +1616,16 @@ def run_experiment():
         "answer_model":
             ANSWER_MODEL,
 
-        "structure_retrieval":
-            {
-                "top_k_sections":
-                    TOP_K,
+        "structure_retrieval": {
+            "top_k_sections":
+                TOP_K,
 
-                "candidate_k":
-                    structure_retriever.candidate_k,
+            "candidate_k":
+                structure_retriever.candidate_k,
 
-                "retriever":
-                    "StructureAwareRetriever",
-            },
+            "retriever":
+                "StructureAwareRetriever",
+        },
 
         "reasoning_correct_threshold":
             REASONING_CORRECT_THRESHOLD,
@@ -1921,29 +1640,6 @@ def run_experiment():
             "A retrieved document is relevant when its Act "
             "and section match the expected Act and section.",
 
-        "recall_definition":
-            "Each question has one target Act and section. "
-            "Recall@k is 1 when the target section appears "
-            "within the top-k retrieved sections.",
-
-        "answer_correctness_definition":
-            "Score from 0 to 100 representing how accurately "
-            "the generated answer answers the legal question.",
-
-        "groundedness_definition":
-            "Score from 0 to 100 representing how well the "
-            "generated answer is supported by retrieved legal context.",
-
-        "completeness_definition":
-            "Score from 0 to 100 representing how completely "
-            "the generated answer contains the important information "
-            "required by the question.",
-
-        "citation_source_accuracy_definition":
-            "Score from 0 to 100 representing how accurately "
-            "the generated answer identifies the relevant Act "
-            "and section, with subsection considered where applicable.",
-
         "reasoning_accuracy_definition":
             "A generated answer is reasoning-correct only "
             "when it answers the question, has a reasoning "
@@ -1956,26 +1652,24 @@ def run_experiment():
         "ground_truth_provisions_available":
             len(ground_truth_lookup),
 
-        "evaluator_parse_failures":
-            {
-                "baseline":
-                    baseline_evaluator_failures,
+        "evaluator_parse_failures": {
+            "baseline":
+                baseline_failures,
 
-                "structure_aware":
-                    structure_evaluator_failures,
-            },
+            "structure_aware":
+                structure_failures,
+        },
 
-        "summary":
-            {
-                "baseline":
-                    baseline_summary,
+        "summary": {
+            "baseline":
+                baseline_summary,
 
-                "structure_aware":
-                    structure_summary,
+            "structure_aware":
+                structure_summary,
 
-                "difference_structure_minus_baseline":
-                    difference,
-            },
+            "difference_structure_minus_baseline":
+                difference,
+        },
 
         "results":
             results,
@@ -1994,17 +1688,17 @@ def run_experiment():
         OUTPUT_FILE,
         "w",
         encoding="utf-8"
-    ) as f:
+    ) as file:
 
         json.dump(
             final_results,
-            f,
+            file,
             indent=2,
             ensure_ascii=False
         )
 
     # ========================================================
-    # PRINT RESULTS
+    # PRINT FINAL RESULTS
     # ========================================================
 
     print("\n")
@@ -2012,137 +1706,80 @@ def run_experiment():
     print("FINAL RESULTS")
     print("=" * 80)
 
-    print(
-        "\nRetrieval Metrics"
-    )
+    print("\nRetrieval Metrics")
 
     print(
-        f"{'Metric':35s}"
-        f"{'Baseline':15s}"
-        f"{'Structure':15s}"
-    )
-
-    print("-" * 80)
-
-    print(
-        f"{'Precision@1':35s}"
+        f"Precision@1: "
         f"{baseline_summary['precision_at_1']:.4f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['precision_at_1']:.4f}"
     )
 
     print(
-        f"{'Precision@5':35s}"
+        f"Precision@5: "
         f"{baseline_summary['precision_at_5']:.4f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['precision_at_5']:.4f}"
     )
 
     print(
-        f"{'Recall@1':35s}"
+        f"Recall@1: "
         f"{baseline_summary['recall_at_1']:.4f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['recall_at_1']:.4f}"
     )
 
     print(
-        f"{'Recall@5':35s}"
+        f"Recall@5: "
         f"{baseline_summary['recall_at_5']:.4f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['recall_at_5']:.4f}"
     )
 
-    print(
-        "\nAnswer Evaluation Metrics"
-    )
+    print("\nAnswer Evaluation Metrics")
 
     print(
-        f"{'Metric':35s}"
-        f"{'Baseline':15s}"
-        f"{'Structure':15s}"
-    )
-
-    print("-" * 80)
-
-    print(
-        f"{'Answer Correctness (%)':35s}"
+        f"Correctness: "
         f"{baseline_summary['answer_correctness']:.2f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['answer_correctness']:.2f}"
     )
 
     print(
-        f"{'Groundedness (%)':35s}"
+        f"Groundedness: "
         f"{baseline_summary['groundedness']:.2f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['groundedness']:.2f}"
     )
 
     print(
-        f"{'Completeness (%)':35s}"
+        f"Completeness: "
         f"{baseline_summary['completeness']:.2f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['completeness']:.2f}"
     )
 
     print(
-        f"{'Citation/Source Accuracy (%)':35s}"
+        f"Citation/source accuracy: "
         f"{baseline_summary['citation_source_accuracy']:.2f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['citation_source_accuracy']:.2f}"
     )
 
-    print(
-        "\nSupporting Metrics"
-    )
+    print("\nSupporting Metrics")
 
     print(
-        f"{'Metric':35s}"
-        f"{'Baseline':15s}"
-        f"{'Structure':15s}"
-    )
-
-    print("-" * 80)
-
-    print(
-        f"{'Reasoning Accuracy':35s}"
+        f"Reasoning accuracy: "
         f"{baseline_summary['reasoning_accuracy']:.4f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['reasoning_accuracy']:.4f}"
     )
 
     print(
-        f"{'Hallucination Rate':35s}"
+        f"Hallucination rate: "
         f"{baseline_summary['hallucination_rate']:.4f}"
-        f"{'':8s}"
+        f" -> "
         f"{structure_summary['hallucination_rate']:.4f}"
-    )
-
-    print(
-        "\nDifference (Structure - Baseline)"
-    )
-
-    print("-" * 80)
-
-    for metric, value in difference.items():
-
-        print(
-            f"{metric:35s}"
-            f"{value:+.4f}"
-        )
-
-    print(
-        "\nEvaluator parse failures:"
-    )
-
-    print(
-        f"  Baseline: "
-        f"{baseline_evaluator_failures}"
-    )
-
-    print(
-        f"  Structure-aware: "
-        f"{structure_evaluator_failures}"
     )
 
     print(
@@ -2158,6 +1795,9 @@ def run_experiment():
     )
 
 
+# ============================================================
+# RUN
+# ============================================================
+
 if __name__ == "__main__":
     run_experiment()
-

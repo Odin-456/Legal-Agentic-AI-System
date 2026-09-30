@@ -2,521 +2,191 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
-from langchain_core.documents import Document
-
-
 XML_DIR = Path("data/raw/australian_property_law")
 
-
+# Cleans extra spaces, tabs, and line breaks from text
 def clean_text(text):
     if not text:
         return ""
 
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    return re.sub(r"\s+", " ", text).strip()
 
-
+# Gets all text contained inside an XML element
 def get_text(element):
     if element is None:
         return ""
 
     return clean_text("".join(element.itertext()))
 
-
+# Gets the number of a subsection or paragraph, such as (1), (a), or (i)
 def get_number(element):
-    """
-    Get the numbering from an element.
-
-    NSW XML stores subsection numbers like (1), (2), (3)
-    inside:
-
-        <head>
-            <no>(1)</no>
-        </head>
-    """
-
     if element is None:
         return ""
 
-    # First check directly under the element.
-    no = element.find("./no")
+    number = element.find("./no")
 
-    if no is not None:
-        return get_text(no)
+    if number is None:
+        number = element.find("./head/no")
 
-    # Then check inside <head>.
-    no = element.find("./head/no")
+    return get_text(number)
 
-    if no is not None:
-        return get_text(no)
-
-    return ""
-
-
-def parse_txt(txt):
-    return get_text(txt)
-
-
-def parse_block_text(block):
-    """
-    Extract only direct <txt> content from a block.
-
-    This prevents nested lists from being flattened into
-    the paragraph text.
-    """
-
+# Gets only the direct text from an XML block
+# This prevents nested lists from being mixed into the main text
+def get_block_text(block):
     texts = []
 
     for child in block:
         if child.tag == "txt":
-            text = parse_txt(child)
+            text = get_text(child)
 
             if text:
                 texts.append(text)
 
-    return " ".join(texts).strip()
+    return " ".join(texts)
 
 
-def parse_list(list_element, indent_level):
-    """
-    Parse a list while preserving numbering and indentation.
-    """
-
+# Parses legal paragraphs and nested paragraphs while keeping their indentation
+def parse_list(list_element, indent=1):
     lines = []
 
-    for li in list_element.findall("./li"):
-        lines.extend(
-            parse_list_item(
-                li,
-                indent_level
-            )
-        )
+    for item in list_element.findall("./li"):
+        number = get_number(item)
+        spaces = "    " * indent
 
-    return lines
+        # Keep information about repealed paragraphs
+        if item.get("status") == "repealed":
+            if number:
+                lines.append(f"{spaces}{number} [Repealed]")
+            continue
 
+        blocks = item.findall("./block")
+        first_text = True
 
-def parse_list_item(li, indent_level):
-    """
-    Parse one list item.
+        for block in blocks:
+            text = get_block_text(block)
 
-    Example:
-
-        (a) Main paragraph
-
-            (i) Nested paragraph
-    """
-
-    lines = []
-
-    number = get_number(li)
-
-    indent = "    " * indent_level
-
-    # Handle explicitly repealed items.
-    if li.get("status") == "repealed":
-
-        if number:
-            lines.append(
-                f"{indent}{number} [Repealed]"
-            )
-
-        return lines
-
-    blocks = li.findall("./block")
-
-    first_block = True
-
-    for block in blocks:
-
-        text = parse_block_text(block)
-
-        if text:
-
-            if first_block and number:
-                lines.append(
-                    f"{indent}{number} {text}"
-                )
-            else:
-                lines.append(
-                    f"{indent}{text}"
-                )
-
-            first_block = False
-
-        # Handle lists nested inside a block.
-        nested_lists = block.findall("./list")
-
-        for nested_list in nested_lists:
-            lines.extend(
-                parse_list(
-                    nested_list,
-                    indent_level + 1
-                )
-            )
-
-    # Handle lists directly inside the list item.
-    nested_lists = li.findall("./list")
-
-    for nested_list in nested_lists:
-        lines.extend(
-            parse_list(
-                nested_list,
-                indent_level + 1
-            )
-        )
-
-    # If there was no block but the item has a number.
-    if not blocks and number:
-        lines.append(
-            f"{indent}{number}"
-        )
-
-    return lines
-
-
-def parse_subsection(tier):
-    """
-    Parse a subsection.
-
-    NSW XML structure:
-
-        <tier type="subclause">
-            <head>
-                <no>(1)</no>
-            </head>
-            <block>
-                <txt>...</txt>
-                <list>...</list>
-            </block>
-        </tier>
-
-    The important part is that the subsection number is
-    located at ./head/no.
-    """
-
-    lines = []
-
-    # Correctly gets (1), (2), (3), etc.
-    subsection_number = get_number(tier)
-
-    blocks = tier.findall("./block")
-
-    first_text_added = False
-
-    for block in blocks:
-
-        text = parse_block_text(block)
-
-        if text:
-
-            if not first_text_added:
-
-                if subsection_number:
-                    lines.append(
-                        f"{subsection_number} {text}"
-                    )
+            if text:
+                if first_text and number:
+                    lines.append(f"{spaces}{number} {text}")
                 else:
-                    lines.append(text)
+                    lines.append(f"{spaces}{text}")
 
-                first_text_added = True
+                first_text = False
 
-            else:
-                lines.append(
-                    f"    {text}"
-                )
+            # Parse lists nested inside the block
+            for nested in block.findall("./list"):
+                lines.extend(parse_list(nested, indent + 1))
 
-        # Lists contained inside the block.
-        nested_lists = block.findall("./list")
+        # Parse lists directly inside the item
+        for nested in item.findall("./list"):
+            lines.extend(parse_list(nested, indent + 1))
 
-        for nested_list in nested_lists:
-            lines.extend(
-                parse_list(
-                    nested_list,
-                    1
-                )
-            )
-
-    # If the subsection contains no text but still has
-    # a subsection number, preserve that number.
-    if not first_text_added and subsection_number:
-        lines.append(
-            subsection_number
-        )
+        # Keep the paragraph number if there is no text
+        if not blocks and number:
+            lines.append(f"{spaces}{number}")
 
     return lines
 
 
-def parse_section(level, act_name):
-    """
-    Parse one NSW legislation section.
-    """
+# Parses a subsection such as (1), (2), or (3)
+def parse_subsection(subsection):
+    lines = []
+    number = get_number(subsection)
+    text_added = False
 
-    section_id = level.get(
-        "id",
-        ""
-    )
+    for block in subsection.findall("./block"):
+        text = get_block_text(block)
+        if text:
+            if not text_added and number:
+                lines.append(f"{number} {text}")
+            elif not text_added:
+                lines.append(text)
+            else:
+                lines.append(f"    {text}")
 
-    match = re.match(
-        r"sec\.([^.]+)",
-        section_id
-    )
+            text_added = True
+        # Parse paragraphs inside the subsection
+        for nested in block.findall("./list"):
+            lines.extend(parse_list(nested))
 
-    if match:
-        section_number = match.group(1)
-    else:
-        section_number = ""
+    # Keep the subsection number if it has no text
+    if not text_added and number:
+        lines.append(number)
 
-    # Extract heading.
+    return lines
+
+
+# Parses one section of an NSW property-law Act
+def parse_section(section, act_name):
+    section_id = section.get("id", "")
+
+    # NSW XML uses IDs such as "sec.42"
+    section_number = section_id.replace("sec.", "").split(".")[0]
+
+    # Get the section heading
     heading = ""
+    heading_element = section.find("./head/heading")
 
-    head = level.find("./head")
-
-    if head is not None:
-
-        heading_element = head.find(
-            "./heading"
-        )
-
-        if heading_element is not None:
-            heading = get_text(
-                heading_element
-            )
-
-    # Only legal content goes into page_content.
-    #
-    # Section number and heading are stored separately
-    # in metadata and printed by print_section().
+    if heading_element is not None:
+        heading = get_text(heading_element)
     lines = []
 
-    subsections = level.findall(
-        "./tier[@type='subclause']"
-    )
+    # Get all subsections in the section
+    for subsection in section.findall("./tier[@type='subclause']"):
+        lines.extend(parse_subsection(subsection))
 
-    for subsection in subsections:
-
-        subsection_lines = parse_subsection(
-            subsection
-        )
-
-        lines.extend(
-            subsection_lines
-        )
-
-    text = "\n".join(lines).strip()
-
+    # Store the section information
     return {
         "act": act_name,
         "section": section_number,
         "heading": heading,
-        "text": text,
+        "text": "\n".join(lines).strip(),
         "source_type": "NSW Property Law Legislation",
     }
 
 
+# Reads one NSW property-law XML file and extracts all its sections
 def parse_act(xml_file):
-    """
-    Parse one NSW property-law Act.
-    """
+    print(f"Parsing: {xml_file.name}")
 
-    print(
-        f"Parsing: {xml_file.name}"
-    )
+    # Read the XML file
+    root = ET.parse(xml_file).getroot()
 
-    tree = ET.parse(xml_file)
-    root = tree.getroot()
-
-    # Extract Act title.
-    act_name = ""
-
+    # Get the Act name
     title = root.find(".//title")
+    act_name = get_text(title)
 
-    if title is not None:
-        act_name = get_text(title)
-
-    # Fallback if title is unavailable.
+    # Use the filename if no title is found
     if not act_name:
-        act_name = (
-            xml_file.stem
-            .replace("_", " ")
-            .title()
-        )
+        act_name = xml_file.stem.replace("_", " ").title()
 
     sections = []
 
-    # NSW legislation uses:
-    #
-    # <level type="clause" id="sec.42">
-    #
-    # rather than <section>.
-    for level in root.findall(
-        ".//level[@type='clause']"
-    ):
+    # Find the sections stored as <level type="clause">
+    for section in root.findall(".//level[@type='clause']"):
 
-        section_id = level.get(
-            "id",
-            ""
-        )
-
-        if not section_id.startswith(
-            "sec."
-        ):
+        # Ignore XML elements that are not sections
+        if not section.get("id", "").startswith("sec."):
             continue
 
-        section = parse_section(
-            level,
-            act_name
-        )
+        sections.append(parse_section(section, act_name))
 
-        if section["section"]:
-            sections.append(section)
-
-    print(
-        f"  Sections found: {len(sections)}"
-    )
+    print(f"  Sections found: {len(sections)}")
 
     return sections
 
-
-def create_langchain_documents(sections):
-    """
-    Convert parsed sections into LangChain Documents.
-    """
-
-    documents = []
-
-    for section in sections:
-
-        document = Document(
-            page_content=section["text"],
-            metadata={
-                "act": section["act"],
-                "section": section["section"],
-                "heading": section["heading"],
-                "source_type": section["source_type"],
-            }
-        )
-
-        documents.append(document)
-
-    return documents
-
-
+# Reads and parses every XML Act in the NSW property-law corpus
 def parse_property_law_corpus():
-    """
-    Parse all XML files in the property-law corpus.
-    """
-
-    all_sections = []
-
-    xml_files = sorted(
-        XML_DIR.glob("*.xml")
-    )
+    xml_files = sorted(XML_DIR.glob("*.xml"))
 
     if not xml_files:
         raise FileNotFoundError(
             f"No XML files found in {XML_DIR}"
         )
 
+    sections = []
+
     for xml_file in xml_files:
+        sections.extend(parse_act(xml_file))
 
-        sections = parse_act(
-            xml_file
-        )
-
-        all_sections.extend(
-            sections
-        )
-
-    return all_sections
-
-
-def print_section(
-    documents,
-    act_name,
-    section_number
-):
-    """
-    Print a specific section for testing.
-    """
-
-    for document in documents:
-
-        if (
-            document["act"] == act_name
-            and document["section"] == section_number
-        ):
-
-            print()
-            print(
-                "=" * 80
-            )
-
-            print(
-                f"{act_name} — Section {section_number}"
-            )
-
-            print(
-                "=" * 80
-            )
-
-            print(
-                f"Act: {document['act']}"
-            )
-
-            print(
-                f"Section: {document['section']}"
-            )
-
-            print(
-                f"Heading: {document['heading']}"
-            )
-
-            print()
-
-            # Legal content only.
-            print(
-                document["text"]
-            )
-
-            print()
-
-            return
-
-    print(
-        f"Section {section_number} not found in {act_name}"
-    )
-
-
-if __name__ == "__main__":
-
-    documents = parse_property_law_corpus()
-
-    print()
-    print(
-        "=" * 60
-    )
-
-    print(
-        f"Documents created: {len(documents)}"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    print_section(
-        documents,
-        "Real Property Act 1900",
-        "42"
-    )
-
-    langchain_documents = (
-        create_langchain_documents(
-            documents
-        )
-    )
-
-    print(
-        f"LangChain documents: "
-        f"{len(langchain_documents)}"
-    )
+    return sections

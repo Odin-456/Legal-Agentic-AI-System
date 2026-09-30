@@ -1,20 +1,9 @@
 from pathlib import Path
 import shutil
-import sys
 
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
-
-
-# ============================================================
-# PROJECT PATH
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from structure_aware_chunker import (
     parse_structure_corpus,
@@ -23,8 +12,10 @@ from structure_aware_chunker import (
 
 
 # ============================================================
-# CONFIGURATION
+# PATHS AND SETTINGS
 # ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 VECTORSTORE_DIR = (
     PROJECT_ROOT
@@ -34,70 +25,50 @@ VECTORSTORE_DIR = (
 )
 
 COLLECTION_NAME = "property_law_structure"
-
 EMBEDDING_MODEL = "text-embedding-3-large"
 
 
 # ============================================================
-# MAIN
+# MAIN FUNCTION
 # ============================================================
 
 def main():
 
+    # Load the OpenAI API key from .env
     load_dotenv(PROJECT_ROOT / ".env")
 
-    print("=" * 70)
-    print("REBUILDING STRUCTURE-AWARE VECTORSTORE")
-    print("=" * 70)
+    print("Rebuilding structure-aware vectorstore...")
 
     # --------------------------------------------------------
-    # Remove existing vectorstore
+    # Remove the old vectorstore
     # --------------------------------------------------------
 
     if VECTORSTORE_DIR.exists():
-
-        print()
-        print("Removing existing structure vectorstore...")
-
+        print("Removing existing vectorstore...")
         shutil.rmtree(VECTORSTORE_DIR)
 
-        print("Existing vectorstore removed.")
-
-    else:
-
-        print()
-        print("No existing structure vectorstore found.")
-
     # --------------------------------------------------------
-    # Parse current structure-aware corpus
+    # Parse the NSW property law XML files
     # --------------------------------------------------------
 
-    print()
-    print("Parsing current structure-aware corpus...")
+    print("Parsing property law corpus...")
 
     documents = parse_structure_corpus()
 
-    print()
-    print(
-        f"Documents loaded: {len(documents)}"
-    )
+    print(f"Documents loaded: {len(documents)}")
 
     # --------------------------------------------------------
-    # Remove duplicates
+    # Remove duplicate documents
     # --------------------------------------------------------
 
     documents = remove_duplicates(documents)
 
-    print(
-        f"Documents after removing duplicates: "
-        f"{len(documents)}"
-    )
+    print(f"Documents after removing duplicates: {len(documents)}")
 
     # --------------------------------------------------------
     # Create embeddings
     # --------------------------------------------------------
 
-    print()
     print("Creating embeddings...")
 
     embeddings = OpenAIEmbeddings(
@@ -105,10 +76,9 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Build Chroma vectorstore
+    # Create the Chroma vectorstore
     # --------------------------------------------------------
 
-    print()
     print("Building Chroma vectorstore...")
 
     VECTORSTORE_DIR.parent.mkdir(
@@ -123,16 +93,11 @@ def main():
         persist_directory=str(VECTORSTORE_DIR),
     )
 
-    print()
-    print("=" * 70)
-    print("VECTORSTORE REBUILD COMPLETE")
-    print("=" * 70)
-
-    print()
+    print("Vectorstore rebuild complete.")
     print(f"Documents: {len(documents)}")
     print(f"Location: {VECTORSTORE_DIR}")
-    print(f"Collection: {COLLECTION_NAME}")
 
 
+# Run the rebuild when this file is executed.
 if __name__ == "__main__":
     main()

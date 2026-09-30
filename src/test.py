@@ -1,1 +1,0 @@
-print("Legal AI project started!")

@@ -1,18 +1,12 @@
-import os
-
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
-MODEL_NAME = "gpt-5-mini"
-
-print("Initialising Query Expansion...")
-
 llm = ChatOpenAI(
-    model=MODEL_NAME,
+    model="gpt-5-mini",
     temperature=0,
-    api_key=os.getenv("OPENAI_API_KEY"),
+
 )
 
 
@@ -72,20 +66,7 @@ EXPANDED SEARCH QUERY:
 
 
 if __name__ == "__main__":
-
-    question = (
-        "What happens if a landlord does not carry out "
-        "required repairs?"
-    )
-
+    question = "What happens if a landlord does not carry out required repairs?"
     expanded = expand_query(question)
-
-    print("=" * 80)
-    print("QUERY EXPANSION")
-    print("=" * 80)
-    print()
-    print(f"Original question:")
-    print(question)
-    print()
-    print(f"Expanded query:")
-    print(expanded)
+    print("Original:", question)
+    print("Expanded:", expanded)
