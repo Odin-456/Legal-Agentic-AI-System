@@ -96,7 +96,7 @@ def search_property_law(query: str) -> str:
 
     results = retriever.retrieve(
         query,
-        expanded_query = expand_query,
+        expanded_query=expanded_query,
         top_k=TOP_K,
         max_related=MAX_RELATED,
     )
