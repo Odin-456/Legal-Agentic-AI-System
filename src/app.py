@@ -17,21 +17,8 @@ from legal_agent import agent
 app = Flask(__name__)
 
 
-@app.route("/health", methods=["GET", "POST"])
+@app.route("/", methods=["GET", "POST"])
 def home():
-    if request.method == "POST":
-        return "POST is working on Render!"
-
-    question = ""
-    answer = ""
-    error = ""
-
-    return render_template(
-        "index.html",
-        question=question,
-        answer=answer,
-        error=error,
-    )
 
     question = ""
     answer = ""
@@ -63,7 +50,7 @@ def home():
                 answer = result["messages"][-1].content
 
             except Exception as e:
-
+                
                 error = f"An error occurred: {e}"
 
     return render_template(
