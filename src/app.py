@@ -17,7 +17,7 @@ from legal_agent import agent
 app = Flask(__name__)
 
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/health", methods=["GET", "POST"])
 def home():
     if request.method == "POST":
         return "POST is working on Render!"
