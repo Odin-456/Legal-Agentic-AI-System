@@ -19,6 +19,19 @@ app = Flask(__name__)
 
 @app.route("/", methods=["GET", "POST"])
 def home():
+    if request.method == "POST":
+        return "POST is working on Render!"
+
+    question = ""
+    answer = ""
+    error = ""
+
+    return render_template(
+        "index.html",
+        question=question,
+        answer=answer,
+        error=error,
+    )
 
     question = ""
     answer = ""
