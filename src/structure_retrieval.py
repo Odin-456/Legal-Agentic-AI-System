@@ -1,343 +1,46 @@
-import re
 from pathlib import Path
-from difflib import SequenceMatcher
 
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
-
-from structure_aware_chunker import parse_structure_corpus
-
-
-load_dotenv()
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+load_dotenv(PROJECT_ROOT / ".env")
+
 
 VECTORSTORE_DIR = (
-    BASE_DIR / "data" / "vectorstore" / "property_law_structure"
+    PROJECT_ROOT
+    / "data"
+    / "vectorstore"
+    / "property_law_structure"
 )
 
 COLLECTION_NAME = "property_law_structure"
 
 EMBEDDING_MODEL = "text-embedding-3-large"
 
-DEFAULT_TOP_K = 5
 CANDIDATE_K = 50
-MAX_RELATED = 10
 
-
-# ============================================================
-# STOP WORDS AND LEGAL TERMS
-# ============================================================
-
-STOP_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by",
-    "can", "could", "does", "for", "from", "how",
-    "if", "in", "is", "it", "of", "on", "or",
-    "that", "the", "this", "to", "what", "when",
-    "where", "which", "who", "why", "with",
-}
-
-# Groups of related legal terms used during text matching
-LEGAL_TERM_GROUPS = {
-    "landlord": {"landlord", "lessor", "owner"},
-    "tenant": {"tenant", "lessee", "renter"},
-    "property": {"property", "land", "premises", "dwelling"},
-    "owner": {"owner", "proprietor", "registered", "ownership"},
-    "repair": {
-        "repair", "repairs", "repairing",
-        "maintenance", "maintain", "maintaining"
-    },
-    "sell": {
-        "sell", "sale", "selling", "transfer",
-        "transferee", "convey", "conveyance"
-    },
-    "buy": {
-        "buy", "purchase", "purchaser",
-        "acquire", "acquisition"
-    },
-    "lease": {
-        "lease", "leasing", "rent",
-        "rental", "tenancy"
-    },
-    "mortgage": {
-        "mortgage", "mortgagee",
-        "mortgagor", "mortgages"
-    },
-    "caveat": {
-        "caveat", "caveator", "caveats"
-    },
-    "easement": {
-        "easement", "easements",
-        "right", "rights"
-    },
-    "notice": {
-        "notice", "notify", "notified",
-        "notification", "inform", "information"
-    },
-    "responsibility": {
-        "responsibility", "responsible",
-        "obligation", "obligations",
-        "duty", "duties", "required",
-        "requirement", "requirements"
-    },
-    "permission": {
-        "permission", "consent", "approval",
-        "authorisation", "authorization",
-        "allow", "allowed", "prohibited"
-    },
-    "function": {
-        "function", "functions", "power", "powers",
-        "authority", "exercise", "exercising",
-        "delegate", "delegation"
-    },
-    "application": {
-        "application", "apply", "applicant",
-        "applying", "request"
-    },
-    "registration": {
-        "registration", "register", "registered",
-        "lodgment", "lodged", "record"
-    },
-}
-
-
-# ============================================================
-# QUERY HELPERS
-# ============================================================
-
-def get_query_terms(query):
-    """Get meaningful terms from a legal question."""
-
-    words = re.findall(
-        r"\b[a-zA-Z0-9]+\b",
-        query.lower()
-    )
-
-    return {
-        word for word in words
-        if word not in STOP_WORDS and len(word) > 1
-    }
-
-
-def correct_query_terms(query_terms):
-    """
-    Find likely misspellings by comparing query terms
-    with legal terms.
-    """
-
-    legal_words = set()
-
-    for group in LEGAL_TERM_GROUPS.values():
-        legal_words.update(group)
-
-    corrected_terms = set(query_terms)
-
-    for term in query_terms:
-        if len(term) < 4:
-            continue
-
-        best_match = None
-        best_score = 0.0
-
-        for legal_word in legal_words:
-            similarity = SequenceMatcher(
-                None,
-                term,
-                legal_word
-            ).ratio()
-
-            if similarity > best_score:
-                best_score = similarity
-                best_match = legal_word
-
-        if best_match and best_score >= 0.80:
-            corrected_terms.add(best_match)
-
-    return corrected_terms
-
-
-def text_match_score(query_terms, text):
-    """
-    Calculate text matching while allowing related
-    legal terms to be treated as similar.
-    """
-
-    if not query_terms:
-        return 0.0
-
-    query_terms = correct_query_terms(query_terms)
-
-    words = set(
-        re.findall(
-            r"\b[a-zA-Z0-9]+\b",
-            str(text).lower()
-        )
-    )
-
-    matched_terms = 0
-
-    for term in query_terms:
-        if term in words:
-            matched_terms += 1
-            continue
-
-        for group in LEGAL_TERM_GROUPS.values():
-            if term in group:
-                if words.intersection(group):
-                    matched_terms += 1
-                break
-
-    return min(
-        matched_terms / len(query_terms),
-        1.0
-    )
-
-
-def extract_section_reference(query):
-    """Find an explicit section reference such as 'section 42' or 's 42'."""
-
-    match = re.search(
-        r"\b(?:section|sec\.?|s\.?)\s*(\d+[A-Za-z]*)\b",
-        query.lower()
-    )
-
-    return match.group(1) if match else ""
-
-
-def extract_subsection_reference(query):
-    """Find an explicit subsection such as 'subsection (1)'."""
-
-    match = re.search(
-        r"subsection\s*(\([0-9A-Za-z]+\))",
-        query.lower()
-    )
-
-    return match.group(1) if match else ""
-
-
-def extract_act_reference(query):
-    """Find an Act explicitly mentioned in the question."""
-
-    act_names = {
-        "real property act 1900": "Real Property Act 1900",
-        "conveyancing act 1919": "Conveyancing Act 1919",
-        "residential tenancies act 2010": "Residential Tenancies Act 2010",
-        "strata schemes management act 2015": "Strata Schemes Management Act 2015",
-        "community land management act 2021": "Community Land Management Act 2021",
-    }
-
-    query_lower = query.lower()
-
-    for name, act in act_names.items():
-        if name in query_lower:
-            return act
-
-    return ""
-
-
-# ============================================================
-# STRUCTURE SCORE
-# ============================================================
-
-def calculate_structure_score(document, query):
-    """
-    Calculate relevance using the document text,
-    heading, Act, section and structural metadata.
-    """
-
-    metadata = document.metadata
-    query_terms = get_query_terms(query)
-
-    if not query_terms:
-        return 0.0
-
-    # Match the Act if the user explicitly mentions one
-    requested_act = extract_act_reference(query)
-
-    document_act = str(metadata.get("act", ""))
-
-    act_score = 0.0
-
-    if requested_act and document_act.lower() == requested_act.lower():
-        act_score = 1.0
-
-    # Get structural information
-    heading = metadata.get("heading", "")
-    subsection = metadata.get("subsection", "")
-    paragraph = metadata.get("paragraph", "")
-    nested_paragraph = metadata.get("nested_paragraph", "")
-
-    # Match the question against the legal text
-    text_score = text_match_score(
-        query_terms,
-        document.page_content
-    )
-
-    # Match the question against the section heading
-    heading_score = text_match_score(
-        query_terms,
-        heading
-    )
-
-    # Match structural information
-    paragraph_score = text_match_score(
-        query_terms,
-        paragraph
-    )
-
-    nested_score = text_match_score(
-        query_terms,
-        nested_paragraph
-    )
-
-    # Check for an explicit section reference
-    section_score = 0.0
-    section_reference = extract_section_reference(query)
-
-    if section_reference:
-        document_section = str(
-            metadata.get("section", "")
-        )
-
-        if document_section.lower() == section_reference.lower():
-            section_score = 1.0
-
-    # Check for an explicit subsection reference
-    subsection_score = 0.0
-    subsection_reference = extract_subsection_reference(query)
-
-    if subsection_reference:
-        if str(subsection).lower() == subsection_reference.lower():
-            subsection_score = 1.0
-
-    # Combine all structure signals
-    score = (
-        0.50 * text_score
-        + 0.22 * heading_score
-        + 0.10 * act_score
-        + 0.08 * section_score
-        + 0.05 * subsection_score
-        + 0.03 * paragraph_score
-        + 0.02 * nested_score
-    )
-
-    return min(score, 1.0)
+SEMANTIC_WEIGHT = 0.60
+STRUCTURE_WEIGHT = 0.40
 
 
 # ============================================================
 # VECTORSTORE
 # ============================================================
 
+# Load the existing structure-aware Chroma vectorstore
 def load_vectorstore():
-    """Load the structure-aware Chroma vector database."""
 
     if not VECTORSTORE_DIR.exists():
+
         raise FileNotFoundError(
             f"Vectorstore not found: {VECTORSTORE_DIR}"
         )
@@ -346,165 +49,17 @@ def load_vectorstore():
         model=EMBEDDING_MODEL
     )
 
-    return Chroma(
+    vectorstore = Chroma(
         collection_name=COLLECTION_NAME,
-        persist_directory=str(VECTORSTORE_DIR),
         embedding_function=embeddings,
+        persist_directory=str(VECTORSTORE_DIR),
     )
 
-
-# ============================================================
-# STRUCTURE HELPERS
-# ============================================================
-
-def get_section_key(document):
-    """Identify a document using its Act and section."""
-
-    metadata = document.metadata
-
-    return (
-        metadata.get("act", ""),
-        metadata.get("section", "")
+    print(
+        f"Loaded vectorstore from: {VECTORSTORE_DIR}"
     )
 
-
-def structure_order(document):
-    """Restore the original legal order of chunks."""
-
-    metadata = document.metadata
-
-    return (
-        str(metadata.get("subsection", "")),
-        str(metadata.get("paragraph", "")),
-        str(metadata.get("nested_paragraph", "")),
-    )
-
-
-# ============================================================
-# SECTION SELECTION
-# ============================================================
-
-def select_sections(scored_documents, top_k):
-    """
-    Select the strongest document from each Act/section.
-
-    This prevents one section from taking all top results.
-    """
-
-    sections = {}
-
-    for score, document in scored_documents:
-        key = get_section_key(document)
-
-        if key not in sections or score > sections[key][0]:
-            sections[key] = (score, document)
-
-    ranked = sorted(
-        sections.values(),
-        key=lambda item: item[0],
-        reverse=True
-    )
-
-    return ranked[:top_k]
-
-
-# ============================================================
-# CHUNK SELECTION WITHIN SECTION
-# ============================================================
-
-def select_related_chunks(
-    query,
-    selected_document,
-    all_documents,
-    max_related
-):
-    """
-    Select relevant chunks from the selected section.
-
-    If the question specifies a subsection, only matching
-    subsection chunks are considered when available.
-    """
-
-    metadata = selected_document.metadata
-
-    act = metadata.get("act", "")
-    section = metadata.get("section", "")
-
-    # Find all chunks belonging to the selected section
-    section_documents = [
-        document
-        for document in all_documents
-        if document.metadata.get("act") == act
-        and document.metadata.get("section") == section
-    ]
-
-    if not section_documents:
-        return [selected_document]
-
-    # Check for a specific subsection
-    subsection_reference = extract_subsection_reference(query)
-
-    if subsection_reference:
-        subsection_documents = [
-            document
-            for document in section_documents
-            if str(
-                document.metadata.get("subsection", "")
-            ).lower() == subsection_reference.lower()
-        ]
-
-        if subsection_documents:
-            section_documents = subsection_documents
-
-    # Score chunks within the selected section
-    query_terms = get_query_terms(query)
-    scored_chunks = []
-
-    for document in section_documents:
-
-        text_score = text_match_score(
-            query_terms,
-            document.page_content
-        )
-
-        heading_score = text_match_score(
-            query_terms,
-            document.metadata.get("heading", "")
-        )
-
-        subsection_score = 0.0
-
-        if subsection_reference:
-            if str(
-                document.metadata.get("subsection", "")
-            ).lower() == subsection_reference.lower():
-                subsection_score = 1.0
-
-        chunk_score = (
-            0.70 * text_score
-            + 0.20 * heading_score
-            + 0.10 * subsection_score
-        )
-
-        scored_chunks.append(
-            (chunk_score, document)
-        )
-
-    # Select the strongest chunks
-    scored_chunks.sort(
-        key=lambda item: item[0],
-        reverse=True
-    )
-
-    selected = [
-        document
-        for _, document in scored_chunks[:max_related]
-    ]
-
-    # Restore the original legal order
-    selected.sort(key=structure_order)
-
-    return selected
+    return vectorstore
 
 
 # ============================================================
@@ -516,113 +71,521 @@ class StructureAwareRetriever:
     def __init__(self, candidate_k=CANDIDATE_K):
 
         self.candidate_k = candidate_k
+
+        # Load the existing vectorstore
         self.vectorstore = load_vectorstore()
 
         print(
-            "Loading structure-aware legal documents..."
+            "Structure-aware retriever ready."
         )
 
-        self.all_documents = parse_structure_corpus()
 
-        print(
-            f"Loaded {len(self.all_documents)} "
-            f"structure-aware chunks."
-        )
+    # ========================================================
+    # SEMANTIC RETRIEVAL
+    # ========================================================
 
-    # --------------------------------------------------------
-    # Candidate retrieval
-    # --------------------------------------------------------
-
+    # Retrieve the most semantically similar chunks
     def retrieve_candidates(self, query):
-        """Retrieve the initial semantic candidates."""
 
-        return self.vectorstore.similarity_search_with_score(
+        results = self.vectorstore.similarity_search_with_score(
             query,
             k=self.candidate_k
         )
 
-    # --------------------------------------------------------
-    # Reranking
-    # --------------------------------------------------------
+        return results
 
-    def rerank(self, query, candidates):
-        """
-        Combine semantic similarity with structural relevance.
-        """
 
-        scored = []
+    # ========================================================
+    # STRUCTURE SCORE
+    # ========================================================
+
+    # Calculate a score based on whether chunks belong
+    # to the same legal structure
+    def calculate_structure_score(
+        self,
+        document,
+        reference_document
+    ):
+
+        metadata = document.metadata
+        reference_metadata = reference_document.metadata
+
+        score = 0.0
+
+
+        # Same Act
+        if metadata.get("act") == reference_metadata.get("act"):
+
+            score += 0.4
+
+
+        # Same section
+        if metadata.get("section") == reference_metadata.get("section"):
+
+            score += 0.4
+
+
+        # Same subsection
+        if (
+            metadata.get("subsection")
+            and metadata.get("subsection")
+            == reference_metadata.get("subsection")
+        ):
+
+            score += 0.2
+
+
+        return score
+
+
+    # ========================================================
+    # RERANKING
+    # ========================================================
+
+    # Combine semantic similarity with legal structure
+    def rerank(
+        self,
+        query,
+        candidates
+    ):
+
+        if not candidates:
+
+            return []
+
+
+        # Use the strongest semantic result as
+        # the reference document
+        reference_document = candidates[0][0]
+
+        reranked = []
+
 
         for document, distance in candidates:
 
-            semantic_score = 1.0 / (1.0 + float(distance))
+            # Convert Chroma distance into a similarity-like score
+            semantic_score = 1 / (1 + distance)
 
-            structure_score = calculate_structure_score(
+            # Calculate structure similarity
+            structure_score = self.calculate_structure_score(
                 document,
-                query
+                reference_document
             )
 
-            # Combine semantic and structure scores
+            # Combine the two scores
             final_score = (
-                0.60 * semantic_score
-                + 0.40 * structure_score
+                SEMANTIC_WEIGHT * semantic_score
+                +
+                STRUCTURE_WEIGHT * structure_score
             )
 
-            scored.append(
-                (final_score, document)
+            reranked.append(
+                {
+                    "document": document,
+                    "distance": distance,
+                    "semantic_score": semantic_score,
+                    "structure_score": structure_score,
+                    "final_score": final_score,
+                }
             )
 
-        scored.sort(
-            key=lambda item: item[0],
+
+        # Highest score first
+        reranked.sort(
+            key=lambda item: item["final_score"],
             reverse=True
         )
 
-        return scored
+        return reranked
 
-    # --------------------------------------------------------
-    # Main retrieval
-    # --------------------------------------------------------
+
+    # ========================================================
+    # SELECT DIFFERENT LEGAL SECTIONS
+    # ========================================================
+
+    # Select the strongest result from each legal section
+    def select_sections(
+        self,
+        reranked,
+        top_k
+    ):
+
+        selected = []
+
+        seen_sections = set()
+
+
+        for item in reranked:
+
+            document = item["document"]
+
+            metadata = document.metadata
+
+            act = metadata.get("act")
+            section = metadata.get("section")
+
+            section_key = (
+                act,
+                section
+            )
+
+
+            # Avoid returning many chunks
+            # from the same legal section
+            if section_key in seen_sections:
+
+                continue
+
+
+            seen_sections.add(section_key)
+
+            selected.append(item)
+
+
+            if len(selected) >= top_k:
+
+                break
+
+
+        return selected
+
+
+    # ========================================================
+    # GET CHUNKS FROM SAME LEGAL SECTION
+    # ========================================================
+
+    # Retrieve all stored chunks belonging to
+    # the same Act and section directly from Chroma
+    def get_section_documents(
+        self,
+        act,
+        section
+    ):
+
+        data = self.vectorstore.get(
+            where={
+                "$and": [
+                    {
+                        "act": act
+                    },
+                    {
+                        "section": section
+                    },
+                ]
+            },
+            include=[
+                "documents",
+                "metadatas",
+            ],
+        )
+
+
+        documents = []
+
+
+        stored_documents = data.get(
+            "documents",
+            []
+        )
+
+        stored_metadata = data.get(
+            "metadatas",
+            []
+        )
+
+
+        for page_content, metadata in zip(
+            stored_documents,
+            stored_metadata
+        ):
+
+            documents.append(
+                Document(
+                    page_content=page_content,
+                    metadata=metadata or {},
+                )
+            )
+
+
+        return documents
+
+
+    # ========================================================
+    # SELECT RELATED CHUNKS
+    # ========================================================
+
+    # Select additional chunks from the same legal section
+    def select_related_chunks(
+        self,
+        query,
+        selected_document,
+        section_documents,
+        max_related
+    ):
+
+        if not section_documents:
+
+            return []
+
+
+        reference_metadata = (
+            selected_document.metadata
+        )
+
+
+        reference_subsection = (
+            reference_metadata.get("subsection")
+        )
+
+
+        # If the main result belongs to a subsection,
+        # prefer chunks from that subsection
+        if reference_subsection:
+
+            subsection_documents = [
+                document
+                for document in section_documents
+                if document.metadata.get("subsection")
+                == reference_subsection
+            ]
+
+            if subsection_documents:
+
+                section_documents = subsection_documents
+
+
+        # ----------------------------------------------------
+        # Score chunks based on simple structural relevance
+        # ----------------------------------------------------
+
+        scored_documents = []
+
+
+        query_words = set(
+            query.lower().split()
+        )
+
+
+        for document in section_documents:
+
+            text = document.page_content.lower()
+
+            heading = document.metadata.get(
+                "heading",
+                ""
+            ).lower()
+
+            subsection = document.metadata.get(
+                "subsection",
+                ""
+            ).lower()
+
+
+            # Simple text overlap
+            text_words = set(
+                text.split()
+            )
+
+            if query_words:
+
+                text_overlap = (
+                    len(query_words & text_words)
+                    / len(query_words)
+                )
+
+            else:
+
+                text_overlap = 0.0
+
+
+            # Heading overlap
+            heading_words = set(
+                heading.split()
+            )
+
+            if query_words:
+
+                heading_overlap = (
+                    len(query_words & heading_words)
+                    / len(query_words)
+                )
+
+            else:
+
+                heading_overlap = 0.0
+
+
+            # Subsection match
+            subsection_score = 0.0
+
+            if (
+                reference_subsection
+                and subsection
+                == reference_subsection.lower()
+            ):
+
+                subsection_score = 1.0
+
+
+            # Keep the same weighting:
+            # 70% text
+            # 20% heading
+            # 10% subsection
+            final_score = (
+                0.70 * text_overlap
+                +
+                0.20 * heading_overlap
+                +
+                0.10 * subsection_score
+            )
+
+
+            scored_documents.append(
+                (
+                    document,
+                    final_score
+                )
+            )
+
+
+        # Sort by relevance
+        scored_documents.sort(
+            key=lambda item: item[1],
+            reverse=True
+        )
+
+
+        # Select the strongest related chunks
+        selected_documents = [
+            document
+            for document, score
+            in scored_documents[:max_related]
+        ]
+
+
+        # ----------------------------------------------------
+        # Restore legal order
+        # ----------------------------------------------------
+
+        def legal_order(document):
+
+            metadata = document.metadata
+
+            return (
+                metadata.get(
+                    "subsection",
+                    ""
+                ),
+                metadata.get(
+                    "paragraph",
+                    ""
+                ),
+                metadata.get(
+                    "nested_paragraph",
+                    ""
+                ),
+            )
+
+
+        selected_documents.sort(
+            key=legal_order
+        )
+
+
+        return selected_documents
+
+
+    # ========================================================
+    # MAIN RETRIEVAL PIPELINE
+    # ========================================================
 
     def retrieve(
         self,
         query,
-        top_k=DEFAULT_TOP_K,
-        max_related=MAX_RELATED
+        top_k=5,
+        max_related=10
     ):
-        """Retrieve relevant sections and related chunks."""
 
-        # Step 1: Retrieve semantic candidates
-        candidates = self.retrieve_candidates(query)
+        # Step 1:
+        # Semantic retrieval
+        candidates = self.retrieve_candidates(
+            query
+        )
 
-        # Step 2: Rerank using structure-aware scoring
+
+        if not candidates:
+
+            return []
+
+
+        # Step 2:
+        # Structure-aware reranking
         reranked = self.rerank(
             query,
             candidates
         )
 
-        # Step 3: Select different legal sections
-        selected_sections = select_sections(
+
+        # Step 3:
+        # Select strongest legal sections
+        selected_sections = self.select_sections(
             reranked,
             top_k
         )
 
+
         results = []
 
-        # Step 4: Retrieve related chunks from each section
-        for section_score, document in selected_sections:
 
-            related_documents = select_related_chunks(
-                query=query,
-                selected_document=document,
-                all_documents=self.all_documents,
-                max_related=max_related
+        # Step 4:
+        # Retrieve related chunks from
+        # the same legal section
+        for item in selected_sections:
+
+            document = item["document"]
+
+            metadata = document.metadata
+
+            act = metadata.get(
+                "act"
             )
 
-            results.append({
-                "document": document,
-                "score": section_score,
-                "metadata": document.metadata,
-                "related_documents": related_documents,
-            })
+            section = metadata.get(
+                "section"
+            )
+
+
+            # Get all chunks for this section
+            section_documents = (
+                self.get_section_documents(
+                    act,
+                    section
+                )
+            )
+
+
+            # Select the most relevant related chunks
+            related_documents = (
+                self.select_related_chunks(
+                    query,
+                    document,
+                    section_documents,
+                    max_related
+                )
+            )
+
+
+            results.append(
+                {
+                    "document": document,
+                    "metadata": metadata,
+                    "score": item["final_score"],
+                    "semantic_score": item["semantic_score"],
+                    "structure_score": item["structure_score"],
+                    "related_documents": related_documents,
+                }
+            )
+
 
         return results
 
@@ -631,45 +594,77 @@ class StructureAwareRetriever:
 # FORMAT RESULTS
 # ============================================================
 
+# Convert retrieval results into readable text
 def format_results(results):
-    """Format retrieved legislation for the legal agent."""
 
-    output = []
+    if not results:
 
-    for index, result in enumerate(results, 1):
+        return (
+            "No relevant NSW property-law "
+            "legislation was found."
+        )
 
-        metadata = result["metadata"]
 
-        act = metadata.get("act", "")
-        section = metadata.get("section", "")
-        heading = metadata.get("heading", "")
+    context = []
 
-        documents = result["related_documents"]
+
+    for i, result in enumerate(
+        results,
+        1
+    ):
+
+        metadata = result.get(
+            "metadata",
+            {}
+        )
+
+        act = metadata.get(
+            "act",
+            "Unknown Act"
+        )
+
+        section = metadata.get(
+            "section",
+            "Unknown section"
+        )
+
+        heading = metadata.get(
+            "heading",
+            ""
+        )
+
+
+        documents = result.get(
+            "related_documents",
+            []
+        )
+
 
         if not documents:
-            documents = [result["document"]]
+
+            documents = [
+                result["document"]
+            ]
+
 
         legal_text = "\n".join(
             document.page_content
             for document in documents
         )
 
-        output.append(
+
+        context.append(
             f"""
-SOURCE {index}
-
-ACT AND SECTION:
-{act}, section {section}
-
-HEADING:
-{heading}
-
+SOURCE {i}
+ACT AND SECTION: {act} § {section}
+HEADING: {heading}
 LEGAL TEXT:
 {legal_text}
 """
         )
 
-    return "\n".join(output)
+
+    return "\n".join(context)
 
 
 # ============================================================
@@ -680,58 +675,26 @@ if __name__ == "__main__":
 
     retriever = StructureAwareRetriever()
 
-    question = input(
-        "\nEnter a legal question: "
-    ).strip()
 
-    if not question:
-        print("No question entered.")
+    question = (
+        "What responsibilities does an association "
+        "have under the Community Land Management Act 2021?"
+    )
 
-    else:
-        results = retriever.retrieve(
-            question,
-            top_k=5,
-            max_related=10
-        )
 
-        print(
-            "\n" + "=" * 80
-        )
+    results = retriever.retrieve(
+        question,
+        top_k=5,
+        max_related=10
+    )
 
-        print(
-            "STRUCTURE-AWARE RETRIEVAL RESULTS"
-        )
 
-        print(
-            "=" * 80
-        )
+    print()
+    print("=" * 80)
+    print("RETRIEVAL RESULTS")
+    print("=" * 80)
 
-        for index, result in enumerate(results, 1):
 
-            metadata = result["metadata"]
-
-            print(
-                f"\n[{index}] "
-                f"{metadata.get('act', '')} "
-                f"- Section "
-                f"{metadata.get('section', '')}"
-            )
-
-            print(
-                f"Score: {result['score']:.4f}"
-            )
-
-            print(
-                f"Heading: "
-                f"{metadata.get('heading', '')}"
-            )
-
-            print("-" * 60)
-
-            for document in result["related_documents"]:
-
-                print(
-                    document.page_content[:500]
-                )
-
-                print("-" * 40)
+    print(
+        format_results(results)
+    )
