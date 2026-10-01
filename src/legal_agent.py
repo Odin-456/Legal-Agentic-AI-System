@@ -6,7 +6,6 @@ from langchain.tools import tool
 from langchain_openai import ChatOpenAI
 
 from structure_retrieval import StructureAwareRetriever
-from query_expansion import expand_query
 
 load_dotenv()
 
@@ -92,11 +91,10 @@ def search_property_law(query: str) -> str:
     registration, conveyancing, residential tenancy,
     strata schemes, or community land management.
     """
-    expanded_query = expand_query(query)
+
 
     results = retriever.retrieve(
         query,
-        expanded_query=expanded_query,
         top_k=TOP_K,
         max_related=MAX_RELATED,
     )
