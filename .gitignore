@@ -20,3 +20,4 @@ data/raw/*
 !data/raw/australian_property_law/*.xml
 data/processed/
 data/evaluation/
+data/vectorstore/
