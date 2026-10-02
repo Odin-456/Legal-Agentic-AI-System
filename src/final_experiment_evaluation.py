@@ -43,7 +43,7 @@ BASELINE_VECTORSTORE = Path(
     "data/vectorstore/property_law_baseline"
 )
 
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 ANSWER_MODEL = "gpt-5-mini"
 
 TOP_K = 5

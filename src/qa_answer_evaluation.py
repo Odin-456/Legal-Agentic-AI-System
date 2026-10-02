@@ -63,7 +63,7 @@ OUTPUT_FILE = (
     / "qa_answer_evaluation_results.json"
 )
 
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "text-embedding-3-large"
 
 ANSWER_MODEL = "gpt-5-mini"
 

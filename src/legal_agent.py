@@ -81,6 +81,7 @@ def format_source(metadata):
 # PROPERTY-LAW SEARCH TOOL
 # ============================================================
 
+
 @tool
 def search_property_law(query: str) -> str:
     """
@@ -91,7 +92,6 @@ def search_property_law(query: str) -> str:
     registration, conveyancing, residential tenancy,
     strata schemes, or community land management.
     """
-
 
     results = retriever.retrieve(
         query,
@@ -107,15 +107,14 @@ def search_property_law(query: str) -> str:
 
     context_parts = []
 
-    for i, result in enumerate(
+    for i, document in enumerate(
         results,
         start=1
     ):
 
-        metadata = result.get(
-            "metadata",
-            {}
-        )
+        # The retriever returns LangChain Document objects.
+        # Metadata is stored in document.metadata.
+        metadata = document.metadata
 
         citation = format_source(
             metadata
@@ -125,47 +124,6 @@ def search_property_law(query: str) -> str:
             "heading",
             ""
         )
-
-        # ----------------------------------------------------
-        # Get the related legal chunks
-        # ----------------------------------------------------
-
-        related_documents = result.get(
-            "related_documents",
-            []
-        )
-
-        text_parts = []
-
-        for document in related_documents:
-
-            text_parts.append(
-                document.page_content
-            )
-
-        # ----------------------------------------------------
-        # Fallback to the main retrieved document
-        # ----------------------------------------------------
-
-        if not text_parts:
-
-            document = result.get(
-                "document"
-            )
-
-            if document is not None:
-
-                text_parts.append(
-                    document.page_content
-                )
-
-        legal_text = "\n".join(
-            text_parts
-        )
-
-        # ----------------------------------------------------
-        # Add source to context
-        # ----------------------------------------------------
 
         context_parts.append(
             f"""
@@ -178,13 +136,15 @@ HEADING:
 {heading}
 
 LEGAL TEXT:
-{legal_text}
+{document.page_content}
 """
         )
 
     return "\n".join(
         context_parts
     )
+
+
 
 
 # ============================================================
