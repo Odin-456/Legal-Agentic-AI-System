@@ -29,31 +29,7 @@ print(
     "Initialising Structure-Aware NSW Property-Law Agent..."
 )
 
-retriever = None
-
-
-def get_retriever():
-    """
-    Load the structure-aware retriever only when it is needed.
-
-    This prevents the Chroma vectorstore from being loaded
-    during Gunicorn application startup.
-    """
-
-    global retriever
-
-    if retriever is None:
-        print(
-            "Loading structure-aware legal documents..."
-        )
-
-        retriever = StructureAwareRetriever()
-
-        print(
-            "Structure-aware vectorstore loaded."
-        )
-
-    return retriever
+retriever = StructureAwareRetriever()
 
 
 # ============================================================
@@ -105,6 +81,7 @@ def format_source(metadata):
 # PROPERTY-LAW SEARCH TOOL
 # ============================================================
 
+
 @tool
 def search_property_law(query: str) -> str:
     """
@@ -116,9 +93,7 @@ def search_property_law(query: str) -> str:
     strata schemes, or community land management.
     """
 
-    current_retriever = get_retriever()
-
-    results = current_retriever.retrieve(
+    results = retriever.retrieve(
         query,
         top_k=TOP_K,
         max_related=MAX_RELATED,
@@ -138,6 +113,7 @@ def search_property_law(query: str) -> str:
     ):
 
         # The retriever returns LangChain Document objects.
+        # Metadata is stored in document.metadata.
         metadata = document.metadata
 
         citation = format_source(
@@ -148,10 +124,6 @@ def search_property_law(query: str) -> str:
             "heading",
             ""
         )
-
-        # ----------------------------------------------------
-        # Add retrieved legal document to context
-        # ----------------------------------------------------
 
         context_parts.append(
             f"""
@@ -171,6 +143,8 @@ LEGAL TEXT:
     return "\n".join(
         context_parts
     )
+
+
 
 
 # ============================================================
@@ -317,4 +291,3 @@ if __name__ == "__main__":
     print("=" * 80)
 
     print(answer)
-
