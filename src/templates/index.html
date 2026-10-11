@@ -2,202 +2,682 @@
 <html lang="en">
 
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NSW Property Law AI Assistant</title>
 
-    <meta charset="UTF-8">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
 
-    <meta name="viewport"
-          content="width=device-width, initial-scale=1.0">
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f5f7fa;
+      color: #333;
+      font-size: 13px;
+    }
 
-    <title>NSW Property-Law AI Assistant</title>
+    .container {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 8px 12px;
+    }
 
-    <style>
+    header {
+      display: flex;
+      align-items: center;
+      padding: 5px 0 8px;
+      border-bottom: 1px solid #e0e0e0;
+      margin-bottom: 10px;
+    }
 
-        * {
-            box-sizing: border-box;
-        }
+    .logo {
+      display: flex;
+      align-items: center;
+    }
 
-        body {
-            margin: 0;
-            font-family: Arial, Helvetica, sans-serif;
-            background: #f4f6f8;
-            color: #222;
-        }
+    .logo h1 {
+      margin: 0;
+      font-size: 21px;
+      color: #2c7744;
+    }
 
-        .container {
-            max-width: 900px;
-            margin: 50px auto;
-            padding: 20px;
-        }
+    .logo-icon {
+      margin-right: 8px;
+      color: #2c7744;
+      font-size: 22px;
+    }
 
-        .header {
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            margin-bottom: 20px;
-        }
+    .main-content {
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
 
-        h1 {
-            margin-top: 0;
-            margin-bottom: 10px;
-        }
+    .question-panel,
+    .chat-panel {
+      background-color: #fff;
+      border-radius: 6px;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.08);
+      min-width: 0;
+    }
 
-        .subtitle {
-            color: #666;
-            line-height: 1.5;
-        }
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 350px;
+    }
 
-        .card {
-            background: white;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-            margin-bottom: 20px;
-        }
+    .panel-header {
+      padding: 9px 11px;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
 
-        label {
-            display: block;
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
+    .panel-header h2 {
+      margin: 0;
+      font-size: 15px;
+      color: #2c7744;
+    }
 
-        textarea {
-            width: 100%;
-            min-height: 120px;
-            padding: 15px;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            font-size: 16px;
-            resize: vertical;
-        }
+    .panel-content {
+      flex: 1;
+      padding: 10px 11px;
+    }
 
-        textarea:focus {
-            outline: none;
-            border-color: #555;
-        }
+    .description {
+      color: #666;
+      font-size: 12px;
+      line-height: 1.4;
+      margin: 0 0 10px;
+    }
 
-        button {
-            margin-top: 15px;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            background: #222;
-            color: white;
-            font-size: 16px;
-            cursor: pointer;
-        }
+    .examples-title {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
 
-        button:hover {
-            background: #444;
-        }
+    .example-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 10px;
+    }
 
-        .answer {
-            white-space: pre-wrap;
-            line-height: 1.6;
-        }
+    .example-button {
+      background-color: #f0f0f0;
+      color: #333;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 5px 7px;
+      cursor: pointer;
+      font-size: 11px;
+      text-align: left;
+    }
 
-        .error {
-            background: #ffe6e6;
-            border: 1px solid #ffb3b3;
-            padding: 15px;
-            border-radius: 8px;
-            color: #a00000;
-        }
+    .example-button:hover {
+      background-color: #e0e0e0;
+    }
 
-        .disclaimer {
-            font-size: 13px;
-            color: #777;
-            line-height: 1.5;
-            margin-top: 20px;
-        }
+    .question-label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 5px;
+      font-size: 12px;
+    }
 
-    </style>
+    .question-input {
+      display: block;
+      width: 100%;
+      min-height: 65px;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      font-size: 12px;
+      font-family: inherit;
+      resize: vertical;
+    }
 
+    .question-input:focus {
+      outline: none;
+      border-color: #2c7744;
+    }
+
+    .ask-button {
+      width: 100%;
+      margin-top: 7px;
+      padding: 8px 10px;
+      background-color: #2c7744;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .ask-button:hover {
+      background-color: #236035;
+    }
+
+    .answer-content {
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+      font-size: 13px;
+    }
+
+    .answer-content p {
+      margin: 5px 0;
+    }
+
+    .answer-content h1,
+    .answer-content h2,
+    .answer-content h3 {
+      color: #2c7744;
+      margin-top: 10px;
+      margin-bottom: 5px;
+    }
+
+    .answer-content ul,
+    .answer-content ol {
+      margin-top: 4px;
+      margin-bottom: 7px;
+      padding-left: 20px;
+    }
+
+    .answer-content li {
+      margin-bottom: 2px;
+    }
+
+    .answer-content strong {
+      font-weight: 600;
+    }
+
+    .welcome-message {
+      background-color: #f9f9f9;
+      border: 1px solid #e0e0e0;
+      border-radius: 5px;
+      padding: 10px;
+      color: #666;
+      line-height: 1.45;
+      font-size: 12px;
+    }
+
+    .error {
+      background-color: #ffebee;
+      border: 1px solid #ffcdd2;
+      padding: 8px;
+      border-radius: 5px;
+      color: #c62828;
+      margin-top: 8px;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      background-color: #fff;
+      border-radius: 6px;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.08);
+      padding: 7px 9px;
+      margin-top: 10px;
+    }
+
+    .control-btn {
+      background-color: #2c7744;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 7px 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+    }
+
+    .control-btn:hover {
+      background-color: #236035;
+    }
+
+    .disclaimer {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background-color: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 5px;
+      font-size: 11px;
+      color: #777;
+      line-height: 1.4;
+    }
+
+    .history-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 300px;
+      max-width: 90%;
+      height: 100%;
+      background-color: #fff;
+      box-shadow: -2px 0 10px rgba(0, 0, 0, 0.1);
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .history-panel.open {
+      transform: translateX(0);
+    }
+
+    .history-header {
+      padding: 10px;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .history-header h2 {
+      margin: 0;
+      font-size: 15px;
+      color: #2c7744;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 21px;
+      color: #555;
+    }
+
+    .history-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    .history-item {
+      border-bottom: 1px solid #eee;
+      padding: 8px 0;
+      cursor: pointer;
+    }
+
+    .history-item:hover {
+      background-color: #f9f9f9;
+    }
+
+    .history-item h4 {
+      margin: 0 0 4px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .history-item p {
+      margin: 0;
+      font-size: 11px;
+      color: #666;
+      line-height: 1.4;
+    }
+
+    .history-timestamp {
+      display: block;
+      margin-top: 4px;
+      font-size: 10px;
+      color: #999;
+    }
+
+    .clear-history {
+      margin: 10px;
+      padding: 7px;
+      background-color: #f0f0f0;
+      color: #333;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .clear-history:hover {
+      background-color: #e0e0e0;
+    }
+
+    @media (max-width: 800px) {
+      .container {
+        padding: 8px;
+      }
+
+      .main-content {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .logo h1 {
+        font-size: 18px;
+      }
+
+      .chat-panel {
+        min-height: 250px;
+      }
+    }
+  </style>
 </head>
-
 
 <body>
 
-<div class="container">
+  <div class="container">
 
-    <div class="header">
-
+    <header>
+      <div class="logo">
+        <div class="logo-icon">⚖️</div>
         <h1>NSW Property-Law AI Assistant</h1>
+      </div>
+    </header>
 
-        <div class="subtitle">
-            Ask questions about the NSW property-law legislation
-            contained in the system's legal corpus.
+    <div class="main-content">
+
+      <div class="question-panel">
+
+        <div class="panel-header">
+          <h2>🏠 Ask a Legal Question</h2>
         </div>
 
-    </div>
+        <div class="panel-content">
 
+          <p class="description">
+            Ask a question about NSW property law. The AI assistant searches
+            NSW property-law legislation and provides an answer based on the
+            retrieved legal provisions.
+          </p>
 
-    <div class="card">
+          <div class="examples-title">📚 Example Questions</div>
 
-        <form method="POST">
+          <div class="example-buttons">
 
-            <label for="question">
-                Legal question
+            <button
+              type="button"
+              class="example-button"
+              onclick="setQuestion('What are the responsibilities of a landlord for repairs?')">
+              🏠 Landlord repair responsibilities
+            </button>
+
+            <button
+              type="button"
+              class="example-button"
+              onclick="setQuestion('What rights does a tenant have when a landlord wants to enter the property?')">
+              🔑 Tenant entry rights
+            </button>
+
+            <button
+              type="button"
+              class="example-button"
+              onclick="setQuestion('What is required when transferring property ownership?')">
+              📜 Property transfer
+            </button>
+
+            <button
+              type="button"
+              class="example-button"
+              onclick="setQuestion('What are the responsibilities of an owners corporation?')">
+              🏢 Owners corporation
+            </button>
+
+          </div>
+
+          <form method="POST">
+
+            <label class="question-label" for="question">
+              💬 Your Question
             </label>
 
             <textarea
-                id="question"
-                name="question"
-                placeholder="Example: What happens if a landlord does not carry out required repairs?"
-                required
-            >{{ question }}</textarea>
+              id="question"
+              name="question"
+              class="question-input"
+              placeholder="Enter your NSW property-law question..."
+              required
+            >{{ question | default('', true) }}</textarea>
 
-            <button type="submit">
-                Ask Question
+            <button type="submit" class="ask-button">
+              Ask Question
             </button>
 
-        </form>
+          </form>
 
-    </div>
-
-
-    {% if error %}
-
-    <div class="card">
-
-        <div class="error">
-            {{ error }}
-        </div>
-
-    </div>
-
-    {% endif %}
-
-
-    {% if answer %}
-
-    <div class="card">
-
-        <h2>Answer</h2>
-
-        <div class="answer">{{ answer }}</div>
-
-    </div>
-
-    {% endif %}
-
-
-    <div class="card">
-
-        <div class="disclaimer">
-
-            <strong>Important:</strong>
-            This system provides general information based on
-            retrieved NSW property-law legislation. It is not
-            personalised legal advice.
+          {% if error %}
+          <div class="error">
+            ⚠️ {{ error }}
+          </div>
+          {% endif %}
 
         </div>
+      </div>
+
+      <div class="chat-panel">
+
+        <div class="panel-header">
+          <h2>AI Answer</h2>
+        </div>
+
+        <div class="panel-content">
+
+          {% if question %}
+          <div class="answer-content">
+            <strong>💬 Your Question:</strong>
+            <p>{{ question }}</p>
+          </div>
+          {% endif %}
+
+          {% if answer %}
+          <div class="answer-content">
+            {{ answer | safe }}
+          </div>
+          {% else %}
+          <div class="welcome-message">
+            <strong>👋 Welcome to the NSW Property-Law AI Assistant.</strong>
+            <br><br>
+            Ask a question about NSW property law to retrieve relevant
+            legislation and receive an answer based on the retrieved
+            provisions.
+          </div>
+          {% endif %}
+
+        </div>
+      </div>
 
     </div>
 
-</div>
+    <div class="toolbar">
+      <button
+        type="button"
+        class="control-btn"
+        id="history-btn">
+        🕘 View History
+      </button>
+    </div>
+
+    <div class="disclaimer">
+      <strong>⚠️ Disclaimer:</strong>
+      This system is designed for research and educational purposes.
+      It does not provide personalised legal advice. Answers are based
+      on the NSW property-law legislation available in the system.
+    </div>
+
+    <div
+      id="flask-data"
+      data-question="{{ question | default('', true) | e }}"
+      data-answer="{{ answer | default('', true) | striptags | e }}"
+      hidden>
+    </div>
+
+    <div class="history-panel" id="history-panel">
+
+      <div class="history-header">
+        <h2>📚 Question History</h2>
+
+        <button
+          type="button"
+          class="close-btn"
+          id="close-history"
+          aria-label="Close question history">
+          ×
+        </button>
+      </div>
+
+      <div class="history-content" id="history-content">
+        <div class="history-item">
+          <h4>Previous Questions</h4>
+          <p>Questions asked during this session will appear here.</p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        class="clear-history"
+        id="clear-history">
+        🗑️ Clear History
+      </button>
+
+    </div>
+
+  </div>
+
+  <script>
+    function setQuestion(question) {
+      document.getElementById("question").value = question;
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+
+      const historyBtn = document.getElementById("history-btn");
+      const closeHistoryBtn = document.getElementById("close-history");
+      const historyPanel = document.getElementById("history-panel");
+      const historyContent = document.getElementById("history-content");
+      const clearHistoryBtn = document.getElementById("clear-history");
+      const flaskData = document.getElementById("flask-data");
+
+      const currentQuestion = flaskData.dataset.question;
+      const currentAnswer = flaskData.dataset.answer;
+
+      let history = [];
+
+      try {
+        history = JSON.parse(
+          localStorage.getItem("legalQuestionHistory") || "[]"
+        );
+      } catch (error) {
+        history = [];
+      }
+
+      if (currentQuestion && currentAnswer) {
+
+        const exists = history.some(function(item) {
+          return item.question === currentQuestion;
+        });
+
+        if (!exists) {
+          history.unshift({
+            question: currentQuestion,
+            answer: currentAnswer,
+            timestamp: new Date().toLocaleString()
+          });
+
+          history = history.slice(0, 20);
+
+          localStorage.setItem(
+            "legalQuestionHistory",
+            JSON.stringify(history)
+          );
+        }
+      }
+
+      function displayHistory() {
+
+        let savedHistory = [];
+
+        try {
+          savedHistory = JSON.parse(
+            localStorage.getItem("legalQuestionHistory") || "[]"
+          );
+        } catch (error) {
+          savedHistory = [];
+        }
+
+        historyContent.innerHTML = "";
+
+        if (savedHistory.length === 0) {
+
+          const emptyItem = document.createElement("div");
+          emptyItem.className = "history-item";
+
+          const title = document.createElement("h4");
+          title.textContent = "No questions yet";
+
+          const message = document.createElement("p");
+          message.textContent = "Your previous questions will appear here.";
+
+          emptyItem.appendChild(title);
+          emptyItem.appendChild(message);
+          historyContent.appendChild(emptyItem);
+
+          return;
+        }
+
+        savedHistory.forEach(function(item) {
+
+          const historyItem = document.createElement("div");
+          historyItem.className = "history-item";
+
+          const title = document.createElement("h4");
+          title.textContent = item.question;
+
+          const answer = document.createElement("p");
+          answer.textContent = (item.answer || "").substring(0, 100);
+
+          const timestamp = document.createElement("span");
+          timestamp.className = "history-timestamp";
+          timestamp.textContent = item.timestamp;
+
+          historyItem.appendChild(title);
+          historyItem.appendChild(answer);
+          historyItem.appendChild(timestamp);
+
+          historyItem.addEventListener("click", function() {
+            document.getElementById("question").value = item.question;
+            historyPanel.classList.remove("open");
+          });
+
+          historyContent.appendChild(historyItem);
+        });
+      }
+
+      historyBtn.addEventListener("click", function() {
+        displayHistory();
+        historyPanel.classList.add("open");
+      });
+
+      closeHistoryBtn.addEventListener("click", function() {
+        historyPanel.classList.remove("open");
+      });
+
+      clearHistoryBtn.addEventListener("click", function() {
+        localStorage.removeItem("legalQuestionHistory");
+        displayHistory();
+      });
+
+      displayHistory();
+
+    });
+  </script>
 
 </body>
-
 </html>
-

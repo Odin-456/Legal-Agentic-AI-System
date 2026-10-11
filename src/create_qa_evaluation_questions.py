@@ -3,6 +3,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from property_law_parser import parse_property_law_corpus
+load_dotenv()
 
 OUTPUT_FILE = Path("data/evaluation/qa_evaluation_questions.json")
 MODEL_NAME = "gpt-5-mini"
@@ -33,33 +34,27 @@ TARGET_SECTIONS = {
 
 def load_target_sections():
     """Load the legislation and select the required sections."""
-
     sections = parse_property_law_corpus()
     selected = []
-
-    for act, section_numbers in TARGET_SECTIONS.items():
-
+    for act in TARGET_SECTIONS:
+        section_numbers = TARGET_SECTIONS[act]
         for section in sections:
-
-            if (
-                section["act"] == act
-                and section["section"] in section_numbers
-            ):
-                selected.append(section)
+            if section["act"] == act:
+                if section["section"] in section_numbers:
+                    selected.append(section)
     return selected
-    
+
+
 def generate_questions(llm, act, sections):
     """Generate one natural-language question for each section."""
-
     section_data = []
-
     for section in sections:
-        section_data.append({
+        data = {
             "section": section["section"],
             "heading": section["heading"],
-            "text": section["text"]
-        })
-
+            "text": section["text"],
+        }
+        section_data.append(data)
     prompt = f"""
 Generate one natural-language question for each section below.
 
@@ -87,71 +82,70 @@ Sections:
 
 {json.dumps(section_data, indent=2)}
 """
-
     response = llm.invoke(prompt)
 
-    return json.loads(response.content)
+    questions = json.loads(response.content)
+
+    return questions
 
 
 def main():
 
-    load_dotenv()
-
     # Load the selected legal sections
     sections = load_target_sections()
-
     print(f"Selected sections: {len(sections)}")
 
     # Create the question-generation model
     llm = ChatOpenAI(
         model=MODEL_NAME,
-        temperature=0.2
+        temperature=0.2,
     )
 
     questions = []
 
     # Generate questions for each Act
     for act in TARGET_SECTIONS:
-
-        act_sections = [
-            section
-            for section in sections
-            if section["act"] == act
-        ]
-
-        generated = generate_questions(
+        act_sections = []
+        for section in sections:
+            if section["act"] == act:
+                act_sections.append(section)
+        generated_questions = generate_questions(
             llm,
             act,
-            act_sections
+            act_sections,
         )
-
-        for question in generated:
-            questions.append({
+        for question in generated_questions:
+            new_question = {
                 "id": len(questions) + 1,
                 "act": act,
                 "section": question["section"],
-                "question": question["question"]
-            })
+                "question": question["question"],
+            }
+            questions.append(new_question)
 
     # Save the evaluation dataset
     dataset = {
         "question_count": len(questions),
-        "questions": questions
+        "questions": questions,
     }
-
     OUTPUT_FILE.parent.mkdir(
         parents=True,
-        exist_ok=True
+        exist_ok=True,
     )
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as file:
+    with open(
+        OUTPUT_FILE,
+        "w",
+        encoding="utf-8",
+    ) as file:
+
         json.dump(
             dataset,
             file,
             indent=2,
-            ensure_ascii=False
+            ensure_ascii=False,
         )
-
+        
     print(f"Created {len(questions)} questions.")
     print(f"Saved to {OUTPUT_FILE}")
 

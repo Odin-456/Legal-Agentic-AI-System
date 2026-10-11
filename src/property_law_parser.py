@@ -1,7 +1,6 @@
 from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
-from langchain_core.documents import Document
 
 
 # Folder containing the NSW property-law XML files
@@ -154,7 +153,6 @@ def parse_section(section, act_name):
         "source_type": "NSW Property Law Legislation",
     }
 
-
 # Reads one NSW property-law XML file and extracts all its sections
 def parse_act(xml_file):
     print(f"Parsing: {xml_file.name}")
@@ -186,26 +184,6 @@ def parse_act(xml_file):
     return sections
 
 
-# Converts the parsed sections into LangChain Documents for the RAG system
-def create_langchain_documents(sections):
-    documents = []
-
-    for section in sections:
-        documents.append(
-            Document(
-                page_content=section["text"],
-                metadata={
-                    "act": section["act"],
-                    "section": section["section"],
-                    "heading": section["heading"],
-                    "source_type": section["source_type"],
-                },
-            )
-        )
-
-    return documents
-
-
 # Reads and parses every XML Act in the NSW property-law corpus
 def parse_property_law_corpus():
     xml_files = sorted(XML_DIR.glob("*.xml"))
@@ -221,52 +199,3 @@ def parse_property_law_corpus():
         sections.extend(parse_act(xml_file))
 
     return sections
-
-
-# Prints one specific section so the parser output can be checked
-def print_section(sections, act_name, section_number):
-    for section in sections:
-
-        if (
-            section["act"] == act_name
-            and section["section"] == section_number
-        ):
-            print()
-            print("=" * 80)
-            print(f"{act_name} — Section {section_number}")
-            print("=" * 80)
-            print(f"Act: {section['act']}")
-            print(f"Section: {section['section']}")
-            print(f"Heading: {section['heading']}")
-            print()
-            print(section["text"])
-
-            return
-
-    print(
-        f"Section {section_number} not found in {act_name}"
-    )
-
-
-# Runs a basic test when this file is executed directly
-if __name__ == "__main__":
-
-    # Parse all NSW property-law Acts
-    sections = parse_property_law_corpus()
-
-    print()
-    print("=" * 60)
-    print(f"Sections parsed: {len(sections)}")
-    print("=" * 60)
-
-    # Test using Section 42 of the Real Property Act 1900
-    print_section(
-        sections,
-        "Real Property Act 1900",
-        "42",
-    )
-
-    # Convert the sections into LangChain Documents
-    documents = create_langchain_documents(sections)
-
-    print(f"LangChain documents: {len(documents)}")

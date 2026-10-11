@@ -1,12 +1,16 @@
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
+
 load_dotenv()
 
-llm = ChatOpenAI(
-    model="gpt-5-mini",
-    temperature=0,
 
+MODEL_NAME = "gpt-5-mini"
+
+
+llm = ChatOpenAI(
+    model=MODEL_NAME,
+    temperature=0,
 )
 
 
@@ -14,8 +18,6 @@ def expand_query(question: str) -> str:
     """
     Convert a user's NSW property-law question into
     one concise search query.
-
-    The expanded query is used only to improve retrieval.
     """
 
     prompt = f"""
@@ -66,7 +68,13 @@ EXPANDED SEARCH QUERY:
 
 
 if __name__ == "__main__":
-    question = "What happens if a landlord does not carry out required repairs?"
+
+    question = (
+        "What happens if a landlord does not "
+        "carry out required repairs?"
+    )
+
     expanded = expand_query(question)
+
     print("Original:", question)
     print("Expanded:", expanded)
