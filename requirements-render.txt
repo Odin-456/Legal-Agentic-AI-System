@@ -7,4 +7,4 @@ langchain-chroma==1.1.0
 langchain-core==1.5.3
 langchain-openai==1.4.2
 langgraph==1.2.10
-openai==2.53.0
+openai==2.53.0Markdown==3.11
