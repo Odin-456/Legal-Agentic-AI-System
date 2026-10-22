@@ -1,0 +1,73 @@
+"""Shared configuration and single-instance model/vector-store setup."""
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+from langchain_chroma import Chroma
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+# This file is in src/evaluation/, so parents[1] is src and parents[2] is project root.
+EVALUATION_DIR = Path(__file__).resolve().parent
+SRC_DIR = EVALUATION_DIR.parent
+PROJECT_ROOT = SRC_DIR.parent
+
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+load_dotenv(PROJECT_ROOT / ".env")
+
+QUESTIONS_FILE = PROJECT_ROOT / "data/evaluation/qa_evaluation_questions.json"
+OUTPUT_FILE = PROJECT_ROOT / "data/evaluation/final_experiment_results.json"
+BASELINE_VECTORSTORE = PROJECT_ROOT / "data/vectorstore/property_law_baseline"
+
+EMBEDDING_MODEL = "text-embedding-3-large"
+ANSWER_MODEL = "gpt-5-mini"
+EVALUATOR_MODEL = "gpt-5-mini"
+QWEN_MODEL = "qwen3:8b"
+LLAMA_MODEL = "llama3.1:8b"
+OLLAMA_URL = "http://localhost:11434/api/chat"
+TOP_K = 5
+STRUCTURE_CANDIDATES = 50
+REASONING_CORRECT_THRESHOLD = 4
+OLLAMA_TIMEOUT = 300
+
+LOCAL_MODELS = {
+    "qwen3_8b": QWEN_MODEL,
+    "llama3_1_8b": LLAMA_MODEL,
+}
+
+SYSTEM_PROMPT = """
+You are a NSW property law question-answering system.
+
+Answer the user's question using ONLY the NSW property-law
+legislation provided in the context.
+
+Rules:
+- Use only the supplied legislative context.
+- Do not use outside legal knowledge.
+- Do not invent Acts, sections, subsections, or legal rules.
+- Identify the relevant Act and section when possible.
+- If the supplied context is insufficient, clearly say so.
+- Do not provide personalised legal advice.
+- Answer concisely and accurately.
+"""
+
+# Create each model client once and reuse it throughout the experiment.
+embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+answer_llm = ChatOpenAI(model=ANSWER_MODEL, temperature=0)
+evaluator_llm = ChatOpenAI(model=EVALUATOR_MODEL, temperature=0)
+
+if not BASELINE_VECTORSTORE.exists():
+    raise FileNotFoundError(f"Baseline vectorstore not found: {BASELINE_VECTORSTORE}")
+
+baseline_vectorstore = Chroma(
+    collection_name="property_law_baseline",
+    persist_directory=str(BASELINE_VECTORSTORE),
+    embedding_function=embeddings,
+)
+
+from structure_retrieval import StructureAwareRetriever
+
+structure_retriever = StructureAwareRetriever(
+    candidate_k=STRUCTURE_CANDIDATES
+)

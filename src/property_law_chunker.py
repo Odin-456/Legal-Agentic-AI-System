@@ -38,7 +38,6 @@ def create_chunks(sections):
 
         if not text.strip():
             continue
-
         # ---------------------------------------------------------
         # Build retrieval content
         # ---------------------------------------------------------

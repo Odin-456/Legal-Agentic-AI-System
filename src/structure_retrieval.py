@@ -1,14 +1,20 @@
 import re
 from pathlib import Path
 from difflib import SequenceMatcher
+
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
+
 from structure_aware_chunker import parse_structure_corpus
+
 
 load_dotenv()
 
-# Configuration
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -21,163 +27,114 @@ VECTORSTORE_DIR = (
 
 COLLECTION_NAME = "property_law_structure"
 EMBEDDING_MODEL = "text-embedding-3-large"
+
 DEFAULT_TOP_K = 5
 CANDIDATE_K = 50
 MAX_RELATED = 10
 
 
-# Stop words and related legal terms
+# ============================================================
+# STOP WORDS AND RELATED LEGAL TERMS
+# ============================================================
 
 STOP_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "can", "could", "does", 
-    "for", "from", "how", "if", "in", "is", "it", "of", "on", "or", "that", "the", 
-    "this", "to", "what", "when", "where", "which", "who", "why", "with",
+    "a", "an", "and", "are", "as", "at", "be", "by",
+    "can", "could", "does", "for", "from", "how", "if",
+    "in", "is", "it", "of", "on", "or", "that", "the",
+    "this", "to", "what", "when", "where", "which",
+    "who", "why", "with",
 }
 
+
 LEGAL_TERM_GROUPS = {
-    "landlord": {"landlord", "lessor", "owner",},
+    "landlord": {
+        "landlord", "lessor", "owner",
+    },
 
     "tenant": {
-        "tenant",
-        "lessee",
-        "renter",
+        "tenant", "lessee", "renter",
     },
 
     "property": {
-        "property",
-        "land",
-        "premises",
-        "dwelling",
+        "property", "land", "premises", "dwelling",
     },
 
     "owner": {
-        "owner",
-        "proprietor",
-        "registered",
-        "ownership",
+        "owner", "proprietor", "registered", "ownership",
     },
 
     "repair": {
-        "repair",
-        "repairs",
-        "repairing",
-        "maintenance",
-        "maintain",
-        "maintaining",
+        "repair", "repairs", "repairing", "maintenance",
+        "maintain", "maintaining",
     },
 
     "sell": {
-        "sell",
-        "sale",
-        "selling",
-        "transfer",
-        "transferee",
-        "convey",
-        "conveyance",
+        "sell", "sale", "selling", "transfer",
+        "transferee", "convey", "conveyance",
     },
 
     "buy": {
-        "buy",
-        "purchase",
-        "purchaser",
-        "acquire",
+        "buy", "purchase", "purchaser", "acquire",
         "acquisition",
     },
 
     "lease": {
-        "lease",
-        "leasing",
-        "rent",
-        "rental",
-        "tenancy",
+        "lease", "leasing", "rent", "rental", "tenancy",
     },
 
     "mortgage": {
-        "mortgage",
-        "mortgagee",
-        "mortgagor",
-        "mortgages",
+        "mortgage", "mortgagee", "mortgagor", "mortgages",
     },
 
     "caveat": {
-        "caveat",
-        "caveator",
-        "caveats",
+        "caveat", "caveator", "caveats",
     },
 
     "easement": {
-        "easement",
-        "easements",
-        "right",
-        "rights",
+        "easement", "easements", "right", "rights",
     },
 
     "notice": {
-        "notice",
-        "notify",
-        "notified",
-        "notification",
-        "inform",
-        "information",
+        "notice", "notify", "notified", "notification",
+        "inform", "information",
     },
 
     "responsibility": {
-        "responsibility",
-        "responsible",
-        "obligation",
-        "obligations",
-        "duty",
-        "duties",
-        "required",
-        "requirement",
-        "requirements",
+        "responsibility", "responsible", "obligation",
+        "obligations", "duty", "duties", "required",
+        "requirement", "requirements",
     },
 
     "permission": {
-        "permission",
-        "consent",
-        "approval",
-        "authorisation",
-        "authorization",
-        "allow",
-        "allowed",
-        "prohibited",
+        "permission", "consent", "approval",
+        "authorisation", "authorization", "allow",
+        "allowed", "prohibited",
     },
 
     "function": {
-        "function",
-        "functions",
-        "power",
-        "powers",
-        "authority",
-        "exercise",
-        "exercising",
-        "delegate",
-        "delegation",
+        "function", "functions", "power", "powers",
+        "authority", "exercise", "exercising",
+        "delegate", "delegation",
     },
 
     "application": {
-        "application",
-        "apply",
-        "applicant",
-        "applying",
-        "request",
+        "application", "apply", "applicant",
+        "applying", "request",
     },
 
     "registration": {
-        "registration",
-        "register",
-        "registered",
-        "lodgment",
-        "lodged",
-        "record",
+        "registration", "register", "registered",
+        "lodgment", "lodged", "record",
     },
 }
 
 
-# Query helpers
+# ============================================================
+# QUERY HELPERS
+# ============================================================
 
 def get_query_terms(query):
+
     words = re.findall(
         r"\b[a-zA-Z0-9]+\b",
         query.lower()
@@ -186,6 +143,7 @@ def get_query_terms(query):
     terms = set()
 
     for word in words:
+
         if word not in STOP_WORDS and len(word) > 1:
             terms.add(word)
 
@@ -193,6 +151,7 @@ def get_query_terms(query):
 
 
 def correct_query_terms(query_terms):
+
     legal_words = set()
 
     for group in LEGAL_TERM_GROUPS.values():
@@ -264,6 +223,7 @@ def text_match_score(query_terms, text):
 
 
 def extract_section_reference(query):
+
     match = re.search(
         r"\b(?:section|sec\.?|s\.?)\s*(\d+[A-Za-z]*)\b",
         query.lower()
@@ -276,6 +236,7 @@ def extract_section_reference(query):
 
 
 def extract_subsection_reference(query):
+
     match = re.search(
         r"subsection\s*(\([0-9A-Za-z]+\))",
         query.lower()
@@ -292,12 +253,18 @@ def extract_act_reference(query):
     query_lower = query.lower()
 
     act_names = {
-        "real property act 1900": "Real Property Act 1900",
-        "conveyancing act 1919": "Conveyancing Act 1919",
+        "real property act 1900":
+            "Real Property Act 1900",
+
+        "conveyancing act 1919":
+            "Conveyancing Act 1919",
+
         "residential tenancies act 2010":
             "Residential Tenancies Act 2010",
+
         "strata schemes management act 2015":
             "Strata Schemes Management Act 2015",
+
         "community land management act 2021":
             "Community Land Management Act 2021",
     }
@@ -310,7 +277,9 @@ def extract_act_reference(query):
     return ""
 
 
-# Structure scoring
+# ============================================================
+# STRUCTURE SCORING
+# ============================================================
 
 def calculate_structure_score(document, query):
 
@@ -327,6 +296,7 @@ def calculate_structure_score(document, query):
     act_score = 0.0
 
     if requested_act:
+
         if document_act.lower() == requested_act.lower():
             act_score = 1.0
 
@@ -336,7 +306,10 @@ def calculate_structure_score(document, query):
     heading = metadata.get("heading", "")
     subsection = metadata.get("subsection", "")
     paragraph = metadata.get("paragraph", "")
-    nested_paragraph = metadata.get("nested_paragraph", "")
+    nested_paragraph = metadata.get(
+        "nested_paragraph",
+        ""
+    )
 
     page_content = document.page_content
 
@@ -400,11 +373,14 @@ def calculate_structure_score(document, query):
     return min(score, 1.0)
 
 
-# Vectorstore
+# ============================================================
+# VECTOR STORE
+# ============================================================
 
 def load_vectorstore():
 
     if not VECTORSTORE_DIR.exists():
+
         raise FileNotFoundError(
             f"Vectorstore not found: {VECTORSTORE_DIR}"
         )
@@ -420,7 +396,9 @@ def load_vectorstore():
     )
 
 
-# Section helpers
+# ============================================================
+# SECTION HELPERS
+# ============================================================
 
 def get_section_key(document):
 
@@ -443,7 +421,9 @@ def structure_order(document):
     )
 
 
-# Section selection
+# ============================================================
+# SECTION SELECTION
+# ============================================================
 
 def select_sections(scored_documents, top_k):
 
@@ -468,7 +448,9 @@ def select_sections(scored_documents, top_k):
     return ranked[:top_k]
 
 
-# Related chunks within a section
+# ============================================================
+# RELATED CHUNKS WITHIN A SECTION
+# ============================================================
 
 def select_related_chunks(
     query,
@@ -580,7 +562,9 @@ def select_related_chunks(
     return selected
 
 
-# Structure-aware retriever
+# ============================================================
+# STRUCTURE-AWARE RETRIEVER
+# ============================================================
 
 class StructureAwareRetriever:
 
@@ -645,7 +629,6 @@ class StructureAwareRetriever:
         max_related=MAX_RELATED
     ):
 
-
         candidates = self.retrieve_candidates(
             query
         )
@@ -660,7 +643,7 @@ class StructureAwareRetriever:
             top_k
         )
 
-        results =  []
+        results = []
 
         for section_score, document in selected_sections:
 
