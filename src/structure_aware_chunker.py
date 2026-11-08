@@ -11,7 +11,7 @@ XML_DIR = Path(
 
 def clean_text(text):
     if not text:
-        return ""
+        return "" 
 
     text = re.sub(r"\s+", " ", text)
 

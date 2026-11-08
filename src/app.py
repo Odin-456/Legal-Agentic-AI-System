@@ -5,9 +5,6 @@ from flask import Flask, render_template, request
 
 SRC_DIR = Path(__file__).resolve().parent
 
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
 from legal_agent import agent
 
 app = Flask(__name__)
@@ -54,9 +51,7 @@ def home():
 
 if __name__ == "__main__":
 
-    print("=" * 80)
     print("NSW PROPERTY-LAW AGENTIC AI SYSTEM")
-    print("=" * 80)
     print()
     print("Web interface starting...")
     print("Open http://127.0.0.1:5000 in your browser.")

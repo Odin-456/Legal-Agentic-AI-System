@@ -28,19 +28,9 @@ from structure_aware_chunker import (
 
 # Configuration
 
-BASELINE_VECTORSTORE = (
-    PROJECT_ROOT
-    / "data"
-    / "vectorstore"
-    / "property_law_baseline"
-)
+BASELINE_VECTORSTORE = PROJECT_ROOT/"data"/"vectorstore"/"property_law_baseline"
 
-STRUCTURE_VECTORSTORE = (
-    PROJECT_ROOT
-    / "data"
-    / "vectorstore"
-    / "property_law_structure"
-)
+STRUCTURE_VECTORSTORE = PROJECT_ROOT/"data"/"vectorstore"/"property_law_structure"
 
 EMBEDDING_MODEL = "text-embedding-3-large"
 
