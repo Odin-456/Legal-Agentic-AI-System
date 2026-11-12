@@ -1,12 +1,12 @@
 # Legal Document Retrieval and Question Answering
 
-This repository contains a lightweight Agentic AI system for retrieving information from NSW property legislation and answering legal questions. It uses XML parsing, hierarchical document chunking, Chroma vector databases, structure-aware retrieval and a LangChain agent powered by GPT-5-mini.
+This repository contains a lightweight Agentic AI system for retrieving information from NSW property legislation and answering legal questions. The system uses XML parsing, hierarchical document chunking, Chroma vector databases, structure-aware retrieval and a LangChain agent powered by GPT-5-mini.
 
 ## 1. Project Configuration
 
-The project uses Python 3.11.4 and organises its source code, legislation data, vector databases and evaluation results under the repository root.
+The project uses Python 3.11.4. Source code is stored in `src/`, while legislation data, vector databases and evaluation results are organised under `data/`.
 
-The main Python scripts are stored in `src/`. Dataset files and generated outputs are stored in `data/`.
+The original NSW property legislation XML files must be placed inside `data/raw/australian_property_law/` before building the vector databases. The vector database and evaluation result folders are generated or populated during the corresponding pipeline stages.
 
 The expected directory structure is:
 
@@ -50,9 +50,7 @@ Legal-Agentic-AI-System/
         `-- index.html
 ```
 
-The raw XML legislation files must be placed inside `data/raw/australian_property_law/` before running the preprocessing and vector database construction scripts. The vector database folders are generated during the build process.
-
-Install the dependencies using the repository's `requirements.txt`:
+Create and activate a Python virtual environment from the repository root, then install the required dependencies:
 
 ```bash
 python3 -m venv .venv
@@ -60,23 +58,25 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-The system requires an OpenAI API key for text embeddings and GPT-5-mini. Create a `.env` file in the repository root:
+The system requires an OpenAI API key for generating embeddings, GPT-5-mini and the evaluation process. Create a `.env` file in the repository root:
 
 ```env
 OPENAI_API_KEY=your_openai_api_key
 ```
 
+The five NSW property legislation XML files required by the system are:
+
+- `Real Property Act 1900`
+- `Conveyancing Act 1919`
+- `Residential Tenancies Act 2010`
+- `Strata Schemes Management Act 2015`
+- `Community Land Management Act 2021`
+
 ## 2. Legislation Preprocessing
 
-The system uses five NSW property Acts:
+The preprocessing pipeline converts the original XML legislation into structured documents for baseline and structure-aware retrieval.
 
-- Real Property Act 1900
-- Conveyancing Act 1919
-- Residential Tenancies Act 2010
-- Strata Schemes Management Act 2015
-- Community Land Management Act 2021
-
-The preprocessing pipeline converts the original XML legislation into documents suitable for semantic search and structure-aware retrieval.
+Run the commands from the repository root. The parsing and chunking scripts are used by the vector database construction pipeline.
 
 ### XML Legislation Parsing
 
@@ -85,6 +85,7 @@ The preprocessing pipeline converts the original XML legislation into documents 
 **Input:** Original NSW property legislation XML files stored in `data/raw/australian_property_law/`.
 
 **Processing:**
+
 - Reads the XML files using Python's `xml.etree.ElementTree`.
 - Extracts legislative text, section numbers and headings.
 - Cleans whitespace and processes nested legislative lists.
@@ -100,6 +101,7 @@ The preprocessing pipeline converts the original XML legislation into documents 
 **Input:** Parsed legislation documents.
 
 **Processing:**
+
 - Creates one LangChain Document for each legislative section.
 - Adds the Act name, section number and heading to the document content.
 - Attaches metadata identifying the Act, section, heading and source type.
@@ -113,6 +115,7 @@ The preprocessing pipeline converts the original XML legislation into documents 
 **Input:** Parsed NSW property legislation.
 
 **Processing:**
+
 - Divides legislation according to its original legal hierarchy.
 - Creates documents at section, subsection, paragraph and nested-paragraph levels where applicable.
 - Records hierarchical metadata, including the Act, section, heading, subsection and paragraph references.
@@ -127,11 +130,17 @@ The preprocessing pipeline converts the original XML legislation into documents 
 
 **Script:** `src/build_vectorstore.py`
 
-The script builds two separate Chroma vector databases to support the comparison between baseline RAG and structure-aware retrieval.
+The script runs the legislation preprocessing pipeline and builds two separate Chroma vector databases for comparing baseline RAG and structure-aware retrieval.
 
-**Input:** Baseline section-level documents and structure-aware legislative documents generated from the preprocessing pipeline.
+**Input:**
+
+- Original NSW property legislation XML files in `data/raw/australian_property_law/`.
+- OpenAI API access for embedding generation.
 
 **Processing:**
+
+- Parses the original XML legislation.
+- Generates baseline section-level and structure-aware legislative documents.
 - Generates document embeddings using OpenAI's `text-embedding-3-large` model.
 - Creates a baseline collection named `property_law_baseline`.
 - Creates a structure-aware collection named `property_law_structure`.
@@ -164,15 +173,14 @@ The two vector databases are used separately by the baseline retrieval and struc
 
 **Processing:**
 
-The `StructureAwareRetriever` combines semantic similarity with legal document structure to rank relevant legislative provisions.
-
-1. Identifies relevant legal terms and corrects selected query terms.
-2. Extracts explicit references to Acts, sections and subsections from the question.
-3. Retrieves an initial set of 50 candidate documents using semantic similarity.
-4. Calculates a structure score using matching text, headings, Acts, sections, subsections and paragraph metadata.
-5. Combines the semantic and structure scores using a 60% semantic and 40% structure weighting.
-6. Selects the top five unique Act-section combinations.
-7. Retrieves up to 10 related chunks from the selected sections and orders them according to their legal hierarchy.
+- Combines semantic similarity with legal document structure to rank relevant legislative provisions.
+- Identifies relevant legal terms and corrects selected query terms.
+- Extracts explicit references to Acts, sections and subsections from the question.
+- Retrieves an initial set of 50 candidate documents using semantic similarity.
+- Calculates a structure score using matching text, headings, Acts, sections, subsections and paragraph metadata.
+- Combines semantic and structure scores using a 60% semantic and 40% structure weighting.
+- Selects the top five unique Act-section combinations.
+- Retrieves up to 10 related chunks from the selected sections and orders them according to their legal hierarchy.
 
 The structure score uses the following weights:
 
@@ -188,6 +196,8 @@ The structure score uses the following weights:
 
 **Output:** Ranked legislative provisions and related chunks that provide additional context for answering the user's question.
 
+The retriever is called by the legal question-answering agent when a user submits a question through the application.
+
 ## 4. Agentic AI System and Web Application
 
 ### Legal Question Answering Agent
@@ -197,14 +207,17 @@ The structure score uses the following weights:
 **Input:** A user's legal question and the legislative context returned by the structure-aware retriever.
 
 **Processing:**
+
 - Loads the OpenAI API key from the `.env` file.
 - Initialises GPT-5-mini using the LangChain framework with a temperature of 0.
 - Defines the `search_property_law(query)` tool to connect the agent with the structure-aware retriever.
 - Uses LangChain's `create_agent()` to create a single-agent architecture.
 - Formats retrieved provisions with their Act names and legislative references.
 - Uses a system prompt to restrict answers to the five NSW property Acts included in the corpus.
+- Instructs the agent not to introduce external legal knowledge or invent legislative references.
+- Requires the agent to state when the retrieved context is insufficient to answer a question.
 
-The agent is instructed not to introduce external legal knowledge or invent legislative references. If the retrieved context is insufficient, it must state that the available information is insufficient. The system provides legal information rather than personalised legal advice.
+The system provides legal information rather than personalised legal advice.
 
 **Output:** Concise, context-grounded answers with references to the retrieved legislative provisions.
 
@@ -215,6 +228,7 @@ The agent is instructed not to introduce external legal knowledge or invent legi
 **Input:** A legal question submitted through the web interface.
 
 **Processing:**
+
 - Receives the question through a Flask POST request.
 - Passes the question to the LangChain agent.
 - Retrieves the agent's response.
@@ -223,13 +237,15 @@ The agent is instructed not to introduce external legal knowledge or invent legi
 
 **Output:** A browser-based interface for submitting NSW property-law questions and viewing the generated answers.
 
-Start the application from the repository root:
+Before starting the application, ensure that both vector databases have been built and the `.env` file contains a valid OpenAI API key.
+
+Run the application from the repository root:
 
 ```bash
 python src/app.py
 ```
 
-Open the application in a browser:
+Open the following address in a browser:
 
 ```text
 http://127.0.0.1:5000
@@ -237,25 +253,28 @@ http://127.0.0.1:5000
 
 ## 5. Evaluation Experiments
 
-The evaluation pipeline compares baseline retrieval and structure-aware retrieval, as well as different language models using the same structure-aware retrieval context.
+The evaluation pipeline compares baseline and structure-aware retrieval, as well as different language models using the same structure-aware retrieval context.
 
 ### Evaluation Question Dataset
 
 **Script:** `src/create_qa_evaluation_questions.py`
 
-The evaluation question dataset is stored in:
+The script is used to create the evaluation question dataset for testing the system.
+
+**Output:**
 
 ```text
 data/evaluation/qa_evaluation_questions.json
 ```
 
-This dataset is used as the input for the final experiment evaluation.
+This dataset contains the questions used as input for the final experiment evaluation.
 
 ### Experiment Execution
 
 **Script:** `src/final_experiment_evaluation.py`
 
 **Input:**
+
 - `data/evaluation/qa_evaluation_questions.json`
 - Baseline Chroma vector database.
 - Structure-aware Chroma vector database.
@@ -273,7 +292,7 @@ Four experiments are conducted:
 | 3 | Structure-aware RAG | Qwen3 8B |
 | 4 | Structure-aware RAG | Llama 3.1 8B |
 
-The three language-model experiments using structure-aware retrieval share the same retrieved context, allowing the language models to be compared under the same retrieval conditions.
+The three experiments using structure-aware retrieval share the same retrieved context, allowing the language models to be compared under the same retrieval conditions.
 
 The evaluation measures:
 
@@ -285,20 +304,22 @@ The evaluation measures:
 
 GPT-5-mini is used as the answer model for the GPT experiment and as the evaluation model for assessing the generated answers.
 
-Run the evaluation from the repository root:
+Before running the evaluation, ensure that both vector databases and the evaluation question dataset are available. Ollama must also be installed and running for the local language-model experiments.
 
-```bash
-python src/final_experiment_evaluation.py
-```
-
-For the local language-model experiments, install and start Ollama, then download the required models:
+Download the required models:
 
 ```bash
 ollama pull qwen3:8b
 ollama pull llama3.1:8b
 ```
 
-**Output:** Experiment results are saved in:
+Run the evaluation from the repository root:
+
+```bash
+python src/final_experiment_evaluation.py
+```
+
+**Output:**
 
 ```text
 data/evaluation/final_experiment_results.json
@@ -308,8 +329,8 @@ The evaluation script also saves progress after each question so that intermedia
 
 ## 6. Notes
 
-- The original XML legislation files must be supplied in `data/raw/australian_property_law/`.
 - Run commands from the repository root so that the relative file paths work correctly.
+- Original XML legislation files must be supplied in `data/raw/australian_property_law/`.
 - Build the Chroma vector databases before running the application or final evaluation.
 - An OpenAI API key is required for embeddings, GPT-5-mini and the evaluation process.
 - Ollama and the required local models are needed for the Qwen3 8B and Llama 3.1 8B experiments.
